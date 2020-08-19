@@ -1,0 +1,84 @@
+.. SPDX-License-Identifier: GPL-2.0
+
+The ap1302 driver
+=================
+
+Introduction
+------------
+This driver is responsible of loading a firmware into the ap1302 chip and
+configure a v4l subsytem.
+
+The driver will load the firmware corresponding to the camera sensor
+model configured in the device tree. Then it will configure a v4l
+subsystem with one source pad and a fixed resolution.
+
+Limitations
+-----------
+The resolution cannot be changed and depends on the firmware loaded.
+So far, very few v4l operations are supported by the driver.
+
+ap1302 with Ultra96v2
+---------------------
+
+On this platform the ap1302 is connected to a PL MIPI CSI-2 receiver. The
+following example configures a video capture pipeline with an output of
+1920x1080, and UYVY 8 bit layer format:
+
+.. code-block:: none
+
+    media-ctl -d /dev/media0 -V '"AP1302.4-003c":0 [fmt:UYVY8_1X16/2560x800 field:none]'
+    media-ctl -d /dev/media0 -V '"a0020000.mipi_csi2_rx_subsystem":0 [fmt:UYVY8_1X16/2560x800 field:none]'
+    media-ctl -d /dev/media0 -V '"a0020000.mipi_csi2_rx_subsystem":1 [fmt:UYVY8_1X16/2560x800 field:none]'
+    media-ctl -d /dev/media0 -V  '"a0080000.v_proc_ss":0 [fmt:UYVY8_1X16/2560x800 field:none]'
+    media-ctl -d /dev/media0 -V  '"a0080000.v_proc_ss":1 [fmt:UYVY8_1X16/1920x1200 field:none]'
+
+In this example, after configuration the topology should look like this:
+
+.. code-block:: none
+
+    # media-ctl -p
+    Media controller API version 5.4.0
+
+    Media device information
+    ------------------------
+    driver          xilinx-video
+    model           Xilinx Video Composite Device
+    serial
+    bus info
+    hw revision     0x0
+    driver version  5.4.0
+
+    Device topology
+    - entity 1: vcap_csi output 0 (1 pad, 1 link)
+      type Node subtype V4L flags 0
+      device node name /dev/video0
+      pad0: Sink
+      <- "a0080000.v_proc_ss":1 [ENABLED]
+
+    - entity 5: a0020000.mipi_csi2_rx_subsystem (2 pads, 2 links)
+      type V4L2 subdev subtype Unknown flags 0
+      device node name /dev/v4l-subdev0
+      pad0: Source
+      [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]
+      -> "a0080000.v_proc_ss":0 [ENABLED]
+      pad1: Sink
+      [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]
+      <- "AP1302.4-003c":0 [ENABLED]
+
+    - entity 8: a0080000.v_proc_ss (2 pads, 2 links)
+      type V4L2 subdev subtype Unknown flags 0
+      device node name /dev/v4l-subdev1
+      pad0: Sink
+      [fmt:UYVY8_1X16/1280x720 field:none colorspace:srgb]
+      <- "a0020000.mipi_csi2_rx_subsystem":0 [ENABLED]
+      pad1: Source
+      [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]
+      -> "vcap_csi output 0":0 [ENABLED]
+
+    - entity 11: AP1302.4-003c (1 pad, 1 link)
+      type V4L2 subdev subtype Sensor flags 0
+      device node name /dev/v4l-subdev2
+      pad0: Source
+      [fmt:UYVY8_1X16/2560x800 field:none colorspace:srgb]
+      -> "a0020000.mipi_csi2_rx_subsystem":1 [ENABLED]
+
