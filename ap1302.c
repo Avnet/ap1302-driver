@@ -164,7 +164,8 @@ static const struct regmap_config ap1302_reg32_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int ap1302_read(struct ap1302_device *ap1302, u16 reg, u16 len, void *val)
+static int ap1302_read(struct ap1302_device *ap1302, u16 reg, u16 len,
+		       unsigned int *val)
 {
 	int ret;
 
@@ -446,7 +447,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *ap1302_fw;
 	const u8 *fw_data;
-	u16 reg_val = 0;
+	unsigned int reg_val = 0;
 	u16 win_pos = 0;
 	int ret;
 
