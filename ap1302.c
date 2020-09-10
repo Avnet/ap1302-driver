@@ -17,6 +17,8 @@
  * Still need enhancement
  *
  */
+
+#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/gpio.h>
@@ -52,7 +54,10 @@ struct ap1302_device {
 	struct v4l2_mbus_framefmt formats[1];
 	struct regmap *regmap16;
 	struct regmap *regmap32;
+
 	struct gpio_desc *reset_gpio;
+	struct gpio_desc *standby_gpio;
+	struct clk *clock;
 };
 
 struct ap1302_firmware_header {
@@ -335,10 +340,30 @@ static int ap1302_parse_of(struct ap1302_device *ap1302_dev)
 		return -EINVAL;
 	}
 
-	ap1302_dev->reset_gpio = devm_gpiod_get(ap1302_dev->dev, "reset", GPIOD_OUT_LOW);
+	/* Clock */
+	ap1302_dev->clock = devm_clk_get(ap1302_dev->dev, NULL);
+	if (IS_ERR(ap1302_dev->clock)) {
+		dev_err(ap1302_dev->dev, "Failed to get clock: %ld\n",
+			PTR_ERR(ap1302_dev->clock));
+		return PTR_ERR(ap1302_dev->clock);
+	}
+
+	/* GPIOs */
+	ap1302_dev->reset_gpio = devm_gpiod_get(ap1302_dev->dev, "reset",
+						GPIOD_OUT_LOW);
 	if (IS_ERR(ap1302_dev->reset_gpio)) {
-		dev_err(ap1302_dev->dev, "Missing reset-gpios property\n");
+		dev_err(ap1302_dev->dev, "Can't get reset GPIO: %ld\n",
+			PTR_ERR(ap1302_dev->reset_gpio));
 		return PTR_ERR(ap1302_dev->reset_gpio);
+	}
+
+	ap1302_dev->standby_gpio = devm_gpiod_get_optional(ap1302_dev->dev,
+							   "standby",
+							   GPIOD_OUT_LOW);
+	if (IS_ERR(ap1302_dev->standby_gpio)) {
+		dev_err(ap1302_dev->dev, "Can't get standby GPIO: %ld\n",
+			PTR_ERR(ap1302_dev->standby_gpio));
+		return PTR_ERR(ap1302_dev->standby_gpio);
 	}
 
 	return 0;
