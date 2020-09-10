@@ -730,8 +730,6 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	struct ap1302_device *ap1302;
 	int ret;
 
-	dev_info(&client->dev, "Probe: %s\n", DRIVER_NAME);
-
 	ap1302 = devm_kzalloc(&client->dev, sizeof(*ap1302), GFP_KERNEL);
 	if (!ap1302)
 		return -ENOMEM;
@@ -765,7 +763,6 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	if (ret)
 		return ret;
 
-	dev_info(ap1302->dev, "%s probe successfully done\n", DRIVER_NAME);
 	return 0;
 }
 
