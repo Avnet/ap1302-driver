@@ -34,13 +34,27 @@
 #define REG_SIP_CRC			0xf052
 #define REG_BOOTDATA_STAGE		0x6002
 
+struct ap1302_resolution {
+	unsigned int width;
+	unsigned int height;
+};
+
+struct ap1302_sensor_info {
+	const char *compatible;
+	const char *name;
+	const struct ap1302_resolution *resolutions;
+};
+
+struct ap1302_sensor {
+	const struct ap1302_sensor_info *info;
+};
+
 struct ap1302_device {
 	struct device *dev;
 	struct v4l2_subdev sd;
 	const struct firmware *fw;
 	struct media_pad pad;
 	struct i2c_client *client;
-	u32 cam_config;
 	struct v4l2_mbus_framefmt formats[1];
 	struct regmap *regmap16;
 	struct regmap *regmap32;
@@ -48,6 +62,8 @@ struct ap1302_device {
 	struct gpio_desc *reset_gpio;
 	struct gpio_desc *standby_gpio;
 	struct clk *clock;
+
+	struct ap1302_sensor sensors[2];
 };
 
 static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
@@ -68,12 +84,6 @@ struct ap1302_firmware_header {
 
 #define MAX_FW_LOAD_RETRIES 3
 
-enum {
-	MODE_AP1302_AR0144_DUAL,
-	MODE_AP1302_AR1335_SINGLE,
-	MODE_AP1302_MAX,
-};
-
 struct ap1302_video_format {
 	unsigned int width;
 	const char *pattern;
@@ -88,30 +98,41 @@ struct ap1302_video_format {
 	const char *description;
 };
 
-struct ap1302_resolution {
-	unsigned int width;
-	unsigned int height;
-};
-
-static const struct ap1302_resolution resolutions_ar0144_dual[] = {
-	{
-		.width  = 2560,
-		.height = 800,
-	},
-};
-
-static const struct ap1302_resolution resolutions_ar1335_single[] = {
-	{
-		.width  = 1920,
-		.height = 1080,
-	},
-};
-
 static const struct ap1302_video_format supported_video_formats[] = {
 	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
 	  2, 16, V4L2_PIX_FMT_YUYV, 1, 1, 2, 1, "4:2:2, packed, YUYV" },
 	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
 	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1, "4:2:2, packed, UYVY" },
+};
+
+/* -----------------------------------------------------------------------------
+ * Sensor Info
+ */
+
+static const struct ap1302_sensor_info ap1302_sensor_info[] = {
+	{
+		.compatible = "onnn,ar0144",
+		.name = "ar0114",
+		.resolutions = (const struct ap1302_resolution[]) {
+			{ 2560, 800 },
+			{ },
+		},
+	}, {
+		.compatible = "onnn,ar1335",
+		.name = "ar1335",
+		.resolutions = (const struct ap1302_resolution[]) {
+			{ 1920, 1080 },
+			{ },
+		},
+	},
+};
+
+static const struct ap1302_sensor_info ap1302_sensor_info_none = {
+	.compatible = "",
+	.name = "none",
+	.resolutions = (const struct ap1302_resolution[]) {
+		{ },
+	},
 };
 
 /* -----------------------------------------------------------------------------
@@ -276,31 +297,23 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 static void ap1302_res_roundup(struct ap1302_device *ap1302, u32 *width,
 			       u32 *height)
 {
-	int i;
-	int size;
-	const struct ap1302_resolution *table;
-
-	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL) {
-		table = resolutions_ar0144_dual;
-		size = ARRAY_SIZE(resolutions_ar0144_dual);
-	}
-	else {
-		table = resolutions_ar1335_single;
-		size = ARRAY_SIZE(resolutions_ar1335_single);
-	}
+	const struct ap1302_resolution *resolutions =
+		ap1302->sensors[0].info->resolutions;
+	unsigned int i;
 
 	/* TODO: Search for best match instead of rounding */
-	for (i = 0; i < size; i++) {
-		if ((table[i].width >= *width) && (table[i].height >= *height)) {
-			*width = table[i].width;
-			*height = table[i].height;
+	for (i = 0; resolutions[i].width ; i++) {
+		if (resolutions[i].width >= *width &&
+		    resolutions[i].height >= *height) {
+			*width = resolutions[i].width;
+			*height = resolutions[i].height;
 			return;
 		}
 	}
 
 	/* Use default in case of no match */
-	*width = table[0].width;
-	*height = table[0].height;
+	*width = resolutions[0].width;
+	*height = resolutions[0].height;
 }
 
 static int ap1302_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
@@ -370,19 +383,24 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 
 static int ap1302_request_firmware(struct ap1302_device *ap1302)
 {
+	char name[64];
 	int ret;
 
-	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL)
-		ret = request_firmware(&ap1302->fw, "ar0144_dual_fw.bin", ap1302->dev);
-	else if (ap1302->cam_config == MODE_AP1302_AR1335_SINGLE)
-		ret = request_firmware(&ap1302->fw, "ar1335_single_fw.bin", ap1302->dev);
-	else
-		ret = -EINVAL;
+	ret = snprintf(name, sizeof(name), "ap1302_%s_%s_fw.bin",
+		       ap1302->sensors[0].info->name,
+		       ap1302->sensors[1].info->name);
+	if (ret >= sizeof(name)) {
+		dev_err(ap1302->dev, "Firmware name too long\n");
+		return -EINVAL;
+	}
 
-	if (ret)
-		dev_err(ap1302->dev, "ap1302_request_firmware failed. ret=%d\n", ret);
+	ret = request_firmware(&ap1302->fw, name, ap1302->dev);
+	if (ret) {
+		dev_err(ap1302->dev, "Failed to request firmware: %d\n", ret);
+		return ret;
+	}
 
-	return ret;
+	return 0;
 }
 
 /* When loading firmware, host writes firmware data from address 0x8000.
@@ -576,15 +594,8 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 		return ret;
 	}
 
-	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL) {
-		ap1302->formats[0].width = resolutions_ar0144_dual[0].width;
-		ap1302->formats[0].height = resolutions_ar0144_dual[0].height;
-	}
-	else {
-		ap1302->formats[0].width = resolutions_ar1335_single[0].width;
-		ap1302->formats[0].height = resolutions_ar1335_single[0].height;
-	}
-
+	ap1302->formats[0].width = ap1302->sensors[0].info->resolutions[0].width;
+	ap1302->formats[0].height = ap1302->sensors[0].info->resolutions[0].height;
 	ap1302->formats[0].field = V4L2_FIELD_NONE;
 	ap1302->formats[0].code = MEDIA_BUS_FMT_UYVY8_1X16;
 	ap1302->formats[0].colorspace = V4L2_COLORSPACE_SRGB;
@@ -605,19 +616,10 @@ err:
 
 static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
+	struct device_node *sensors;
+	struct device_node *node;
+	unsigned int i;
 	int ret;
-	struct device_node *node = ap1302->dev->of_node;
-
-	ret = of_property_read_u32(node, "onnn,cam-config", &ap1302->cam_config);
-	if (ret < 0) {
-		dev_err(ap1302->dev, "Missing onnn,cam-config property\n");
-		return ret;
-	}
-
-	if (ap1302->cam_config >= MODE_AP1302_MAX) {
-		dev_err(ap1302->dev, "Invalid cam-config\n");
-		return -EINVAL;
-	}
 
 	/* Clock */
 	ap1302->clock = devm_clk_get(ap1302->dev, NULL);
@@ -643,6 +645,61 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 			PTR_ERR(ap1302->standby_gpio));
 		return PTR_ERR(ap1302->standby_gpio);
 	}
+
+	/* Sensors */
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i)
+		ap1302->sensors[i].info = &ap1302_sensor_info_none;
+
+	sensors = of_get_child_by_name(ap1302->dev->of_node, "sensors");
+	if (!sensors) {
+		dev_err(ap1302->dev, "'sensors' child node not found\n");
+		return -EINVAL;
+	}
+
+	for_each_child_of_node(sensors, node) {
+		struct ap1302_sensor *sensor;
+		const char *compat;
+		unsigned int i;
+		u32 reg;
+
+		if (!of_node_name_eq(node, "sensor"))
+			continue;
+
+		ret = of_property_read_u32(node, "reg", &reg);
+		if (ret < 0) {
+			dev_warn(ap1302->dev,
+				 "'reg' property missing in sensor node\n");
+			continue;
+		}
+
+		if (reg >= ARRAY_SIZE(ap1302->sensors)) {
+			dev_warn(ap1302->dev, "Out-of-bounds 'reg' value %u\n",
+				 reg);
+			continue;
+		}
+
+		sensor = &ap1302->sensors[reg];
+
+		ret = of_property_read_string(node, "compatible", &compat);
+		if (ret < 0)
+			continue;
+
+		for (i = 0; i < ARRAY_SIZE(ap1302_sensor_info); ++i) {
+			const struct ap1302_sensor_info *info =
+				&ap1302_sensor_info[i];
+
+			if (!strcmp(info->compatible, compat)) {
+				sensor->info = info;
+				break;
+			}
+		}
+
+		if (sensor->info == &ap1302_sensor_info_none)
+			dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
+				 compat);
+	}
+
+	of_node_put(sensors);
 
 	return 0;
 }
