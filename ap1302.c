@@ -136,7 +136,7 @@ static const struct regmap_config ap1302_reg32_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int ap1302_i2c_read_reg(struct ap1302_device *ap1302, u16 reg, u16 len, void *val)
+static int ap1302_read(struct ap1302_device *ap1302, u16 reg, u16 len, void *val)
 {
 	int ret;
 
@@ -160,7 +160,7 @@ static int ap1302_i2c_read_reg(struct ap1302_device *ap1302, u16 reg, u16 len, v
 	return ret;
 }
 
-static int ap1302_i2c_write_reg(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
+static int ap1302_write(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
 {
 	int ret;
 	if (len == AP1302_REG16)
@@ -438,7 +438,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	fw_data = (u8 *)&ap1302_fw[1];
 
 	/* Clear crc register. */
-	ret = ap1302_i2c_write_reg(ap1302, REG_SIP_CRC, AP1302_REG16, 0xFFFF);
+	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xFFFF);
 	if (ret)
 		return ret;
 
@@ -449,7 +449,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 
 	/* Write 2 to bootdata_stage register to apply basic_init_hp
 	   settings and enable PLL. */
-	ret = ap1302_i2c_write_reg(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
+	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
 	if (ret)
 		return ret;
 
@@ -464,7 +464,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	msleep(40);
 
 	/* Check crc. */
-	ret = ap1302_i2c_read_reg(ap1302, REG_SIP_CRC, AP1302_REG16, &reg_val);
+	ret = ap1302_read(ap1302, REG_SIP_CRC, AP1302_REG16, &reg_val);
 	if (ret)
 		return ret;
 
@@ -476,7 +476,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 
 	/* Write 0xFFFF to bootdata_stage register to indicate AP1302 that
 	   the whole bootdata content has been loaded. */
-	ret = ap1302_i2c_write_reg(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xFFFF);
+	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xFFFF);
 	if (ret)
 		return ret;
 
@@ -494,7 +494,7 @@ static int ap1302_detect_chip(struct ap1302_device *ap1302)
 	unsigned int reg_val = 0;
 	int ret;
 
-	ret = ap1302_i2c_read_reg(ap1302, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
+	ret = ap1302_read(ap1302, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
 	if (ret || (reg_val != AP1302_CHIP_ID)) {
 		dev_err(ap1302->dev,
 			"Chip version does not match. ret=%d ver=0x%04x\n", ret, reg_val);
@@ -502,7 +502,7 @@ static int ap1302_detect_chip(struct ap1302_device *ap1302)
 	}
 	dev_info(ap1302->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
 
-	ret = ap1302_i2c_read_reg(ap1302, REG_CHIP_REV, AP1302_REG16, &reg_val);
+	ret = ap1302_read(ap1302, REG_CHIP_REV, AP1302_REG16, &reg_val);
 	if (ret)
 		return ret;
 	dev_info(ap1302->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
