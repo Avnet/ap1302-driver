@@ -567,41 +567,59 @@ static int ap1302_detect_chip(struct ap1302_device *ap1302)
 	return 0;
 }
 
-static int ap1302_config_hw(struct ap1302_device *ap1302)
+static int ap1302_hw_init(struct ap1302_device *ap1302)
 {
 	unsigned int retries;
 	int ret;
 
+	/* Request and validate the firmware. */
 	ret = ap1302_request_firmware(ap1302);
 	if (ret)
-		goto done;
+		return ret;
 
+	/*
+	 * Load the firmware, retrying in case of CRC errors. The AP1302 is
+	 * reset with a full power cycle between each attempt.
+	 */
 	for (retries = 0; retries < MAX_FW_LOAD_RETRIES; ++retries) {
 		ret = ap1302_power_on(ap1302);
 		if (ret < 0)
-			goto done;
+			goto error_firmware;
 
 		ret = ap1302_detect_chip(ap1302);
 		if (ret)
-			break;
+			goto error_power;
 
 		ret = ap1302_load_firmware(ap1302);
-		if (ret != -EAGAIN)
+		if (!ret)
 			break;
+
+		if (ret != -EAGAIN)
+			goto error_power;
 
 		ap1302_power_off(ap1302);
 	}
 
-	if (ret == -EAGAIN) {
-		dev_err(ap1302->dev, "Firmware load failed, aborting\n");
+	if (retries == MAX_FW_LOAD_RETRIES) {
+		dev_err(ap1302->dev,
+			"Firmware load retries exceeded, aborting\n");
 		ret = -ETIMEDOUT;
+		goto error_power;
 	}
 
-done:
-	if (ret < 0)
-		release_firmware(ap1302->fw);
+	return 0;
+
+error_power:
+	ap1302_power_off(ap1302);
+error_firmware:
+	release_firmware(ap1302->fw);
 
 	return ret;
+}
+
+static void ap1302_hw_cleanup(struct ap1302_device *ap1302)
+{
+	ap1302_power_off(ap1302);
 }
 
 /* -----------------------------------------------------------------------------
@@ -811,13 +829,15 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	if (ret < 0)
 		return ret;
 
-	ret = ap1302_config_hw(ap1302);
+	ret = ap1302_hw_init(ap1302);
 	if (ret)
 		return ret;
 
 	ret = ap1302_config_v4l2(ap1302);
-	if (ret)
+	if (ret) {
+		ap1302_hw_cleanup(ap1302);
 		return ret;
+	}
 
 	return 0;
 }
@@ -827,7 +847,7 @@ static int ap1302_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ap1302_device *ap1302 = to_ap1302(sd);
 
-	ap1302_power_off(ap1302);
+	ap1302_hw_cleanup(ap1302);
 
 	release_firmware(ap1302->fw);
 
