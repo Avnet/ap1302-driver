@@ -217,6 +217,46 @@ static int ap1302_write(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
  * Power Handling
  */
 
+static int ap1302_power_on_sensors(struct ap1302_device *ap1302)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		ret = regulator_bulk_enable(sensor->num_supplies,
+					    sensor->supplies);
+		if (ret) {
+			dev_err(ap1302->dev,
+				"Failed to enable supplies for sensor %u\n", i);
+			goto error;
+		}
+	}
+
+	return 0;
+
+error:
+	for (; i > 0; --i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i - 1];
+
+		regulator_bulk_disable(sensor->num_supplies, sensor->supplies);
+	}
+
+	return ret;
+}
+
+static void ap1302_power_off_sensors(struct ap1302_device *ap1302)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		regulator_bulk_disable(sensor->num_supplies, sensor->supplies);
+	}
+}
+
 static int ap1302_power_on(struct ap1302_device *ap1302)
 {
 	int ret;
@@ -578,13 +618,21 @@ static int ap1302_hw_init(struct ap1302_device *ap1302)
 		return ret;
 
 	/*
+	 * Power the sensors first, as the firmware will access them once it
+	 * gets loaded.
+	 */
+	ret = ap1302_power_on_sensors(ap1302);
+	if (ret < 0)
+		goto error_firmware;
+
+	/*
 	 * Load the firmware, retrying in case of CRC errors. The AP1302 is
 	 * reset with a full power cycle between each attempt.
 	 */
 	for (retries = 0; retries < MAX_FW_LOAD_RETRIES; ++retries) {
 		ret = ap1302_power_on(ap1302);
 		if (ret < 0)
-			goto error_firmware;
+			goto error_power_sensors;
 
 		ret = ap1302_detect_chip(ap1302);
 		if (ret)
@@ -611,6 +659,8 @@ static int ap1302_hw_init(struct ap1302_device *ap1302)
 
 error_power:
 	ap1302_power_off(ap1302);
+error_power_sensors:
+	ap1302_power_off_sensors(ap1302);
 error_firmware:
 	release_firmware(ap1302->fw);
 
@@ -620,6 +670,7 @@ error_firmware:
 static void ap1302_hw_cleanup(struct ap1302_device *ap1302)
 {
 	ap1302_power_off(ap1302);
+	ap1302_power_off_sensors(ap1302);
 }
 
 /* -----------------------------------------------------------------------------
