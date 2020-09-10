@@ -14,6 +14,7 @@
 #include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 #include <linux/kernel.h>
 #include <linux/media.h>
 #include <linux/module.h>
@@ -43,10 +44,13 @@ struct ap1302_sensor_info {
 	const char *compatible;
 	const char *name;
 	const struct ap1302_resolution *resolutions;
+	const char * const *supplies;
 };
 
 struct ap1302_sensor {
 	const struct ap1302_sensor_info *info;
+	unsigned int num_supplies;
+	struct regulator_bulk_data *supplies;
 };
 
 struct ap1302_device {
@@ -117,6 +121,12 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.resolutions = (const struct ap1302_resolution[]) {
 			{ 2304, 1536 },
 			{ },
+		},
+		.supplies = (const char * const[]) {
+			"vddpll",
+			"vaa",
+			"vddio",
+			NULL,
 		},
 	}, {
 		.compatible = "onnn,ar1335",
@@ -653,6 +663,10 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 	u32 reg;
 	int ret;
 
+	/*
+	 * Retrieve the sensor index and model from the reg property and
+	 * compatible properties.
+	 */
 	ret = of_property_read_u32(node, "reg", &reg);
 	if (ret < 0) {
 		dev_warn(ap1302->dev,
@@ -686,6 +700,31 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
 			 compat);
 		return -EINVAL;
+	}
+
+	/* Retrieve the power supplies for the sensor, if any. */
+	if (sensor->info->supplies) {
+		for (i = 0; sensor->info->supplies[i]; ++i)
+			;
+
+		sensor->num_supplies = i;
+		sensor->supplies = devm_kcalloc(ap1302->dev,
+						sensor->num_supplies,
+						sizeof(*sensor->supplies),
+						GFP_KERNEL);
+		if (!sensor->supplies)
+			return -ENOMEM;
+
+		for (i = 0; i < sensor->num_supplies; ++i)
+			sensor->supplies[i].supply = sensor->info->supplies[i];
+
+		ret = devm_regulator_bulk_get(ap1302->dev, sensor->num_supplies,
+					      sensor->supplies);
+		if (ret < 0) {
+			dev_err(ap1302->dev,
+				"Failed to get supplies for sensor %u\n", reg);
+			return ret;
+		}
 	}
 
 	return 0;
