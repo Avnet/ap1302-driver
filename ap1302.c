@@ -273,13 +273,14 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void ap1302_res_roundup(u32 *width, u32 *height, u32 mode)
+static void ap1302_res_roundup(struct ap1302_device *ap1302, u32 *width,
+			       u32 *height)
 {
 	int i;
 	int size;
 	const struct ap1302_resolution *table;
 
-	if (mode == MODE_AP1302_AR0144_DUAL) {
+	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL) {
 		table = resolutions_ar0144_dual;
 		size = ARRAY_SIZE(resolutions_ar0144_dual);
 	}
@@ -319,7 +320,7 @@ static int ap1302_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt
 	}
 
 	/* Find suitable supported resolution */
-	ap1302_res_roundup(&fmt->width, &fmt->height, ap1302->cam_config);
+	ap1302_res_roundup(ap1302, &fmt->width, &fmt->height);
 
 	fmt->field = V4L2_FIELD_NONE;
 	fmt->colorspace = V4L2_COLORSPACE_SRGB;
