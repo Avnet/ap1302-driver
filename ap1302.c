@@ -387,6 +387,8 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 
 static int ap1302_request_firmware(struct ap1302_device *ap1302)
 {
+	const struct ap1302_firmware_header *fw_hdr;
+	unsigned int fw_size;
 	char name[64];
 	int ret;
 
@@ -402,6 +404,21 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	if (ret) {
 		dev_err(ap1302->dev, "Failed to request firmware: %d\n", ret);
 		return ret;
+	}
+
+	/*
+	 * The firmware binary contains a header defined by the
+	 * ap1302_firmware_header structure. The firmware itself (also referred
+	 * to as bootdata) follows the header. Perform sanity checks to ensure
+	 * the firmware is valid.
+	 */
+	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
+	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
+
+	if (fw_hdr->pll_init_size > fw_size) {
+		dev_err(ap1302->dev,
+			"Invalid firmware: PLL init size too large\n");
+		return -EINVAL;
 	}
 
 	return 0;
@@ -458,21 +475,9 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	unsigned int crc;
 	int ret;
 
-	/*
-	 * The firmware binary contains a header defined by the
-	 * ap1302_firmware_header structure. The firmware itself (also referred
-	 * to as bootdata) follows the header. Perform sanity checks to ensure
-	 * the firmware is valid.
-	 */
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
 	fw_data = (u8 *)&fw_hdr[1];
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
-
-	if (fw_hdr->pll_init_size > fw_size) {
-		dev_err(ap1302->dev,
-			"Invalid firmware: PLL init size too large\n");
-		return -EINVAL;
-	}
 
 	/* Clear the CRC register. */
 	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xffff);
