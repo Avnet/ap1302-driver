@@ -559,12 +559,12 @@ static int ap1302_config_hw(struct ap1302_device *ap1302)
 
 	ret = ap1302_request_firmware(ap1302);
 	if (ret)
-		return ret;
+		goto done;
 
 	for (retries = 0; retries < MAX_FW_LOAD_RETRIES; ++retries) {
 		ret = ap1302_power_on(ap1302);
 		if (ret < 0)
-			return ret;
+			goto done;
 
 		ret = ap1302_detect_chip(ap1302);
 		if (ret)
@@ -581,6 +581,10 @@ static int ap1302_config_hw(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev, "Firmware load failed, aborting\n");
 		ret = -ETIMEDOUT;
 	}
+
+done:
+	if (ret < 0)
+		release_firmware(ap1302->fw);
 
 	return ret;
 }
