@@ -178,22 +178,70 @@ static int ap1302_i2c_write_reg(struct ap1302_device *ap1302, u16 reg, u16 len, 
 	return ret;
 }
 
-static void ap1302_reset_assert(struct ap1302_device *dev)
+/* -----------------------------------------------------------------------------
+ * Power Handling
+ */
+
+static int ap1302_power_on(struct ap1302_device *ap1302)
 {
-	gpiod_set_value(dev->reset_gpio, 1);
+	int ret;
+
+	/* 0. RESET was asserted when getting the GPIO. */
+
+	/* 1. Assert STANDBY. */
+	if (ap1302->standby_gpio) {
+		gpiod_set_value(ap1302->standby_gpio, 1);
+		usleep_range(200, 1000);
+	}
+
+	/* 2. Power up the regulators. To be implemented. */
+
+	/* 3. De-assert STANDBY. */
+	if (ap1302->standby_gpio) {
+		gpiod_set_value(ap1302->standby_gpio, 0);
+		usleep_range(200, 1000);
+	}
+
+	/* 4. Turn the clock on. */
+	ret = clk_prepare_enable(ap1302->clock);
+	if (ret < 0) {
+		dev_err(ap1302->dev, "Failed to enable clock: %d\n", ret);
+		return ret;
+	}
+
+	/* 5. De-assert RESET. */
+	gpiod_set_value(ap1302->reset_gpio, 0);
+
+	/*
+	 * 6. Wait for the AP1302 to initialize. The datasheet doesn't specify
+	 * how long this takes.
+	 */
+	usleep_range(10000, 11000);
+
+	return 0;
 }
 
-static void ap1302_reset_deassert(struct ap1302_device *dev)
+static void ap1302_power_off(struct ap1302_device *ap1302)
 {
-	gpiod_set_value(dev->reset_gpio, 0);
-}
+	/* 1. Assert RESET. */
+	gpiod_set_value(ap1302->reset_gpio, 1);
 
-static void ap1302_reset(struct ap1302_device *ap1302)
-{
-	ap1302_reset_assert(ap1302);
-	msleep(10);
-	ap1302_reset_deassert(ap1302);
-	msleep(10);
+	/* 2. Turn the clock off. */
+	clk_disable_unprepare(ap1302->clock);
+
+	/* 3. Assert STANDBY. */
+	if (ap1302->standby_gpio) {
+		gpiod_set_value(ap1302->standby_gpio, 1);
+		usleep_range(200, 1000);
+	}
+
+	/* 4. Power down the regulators. To be implemented. */
+
+	/* 5. De-assert STANDBY. */
+	if (ap1302->standby_gpio) {
+		usleep_range(200, 1000);
+		gpiod_set_value(ap1302->standby_gpio, 0);
+	}
 }
 
 /* -----------------------------------------------------------------------------
@@ -464,8 +512,8 @@ static int ap1302_detect_chip(struct ap1302_device *ap1302)
 
 static int ap1302_config_hw(struct ap1302_device *ap1302)
 {
+	unsigned int retries;
 	int ret;
-	int nb_retries = 0;
 
 	ret = ap1302_request_firmware(ap1302);
 	if (ret) {
@@ -473,15 +521,26 @@ static int ap1302_config_hw(struct ap1302_device *ap1302)
 		return ret;
 	}
 
-	do {
-		ap1302_reset(ap1302);
+	for (retries = 0; retries < MAX_FW_LOAD_RETRIES; ++retries) {
+		ret = ap1302_power_on(ap1302);
+		if (ret < 0)
+			return ret;
+
 		ret = ap1302_detect_chip(ap1302);
 		if (ret)
 			break;
 
 		ret = ap1302_load_firmware(ap1302);
-		nb_retries++;
-	}while (ret == -EAGAIN && nb_retries < MAX_FW_LOAD_RETRIES);
+		if (ret != -EAGAIN)
+			break;
+
+		ap1302_power_off(ap1302);
+	}
+
+	if (ret == -EAGAIN) {
+		dev_err(ap1302->dev, "Firmware load failed, aborting\n");
+		ret = -ETIMEDOUT;
+	}
 
 	return ret;
 }
@@ -569,7 +628,7 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 
 	/* GPIOs */
 	ap1302->reset_gpio = devm_gpiod_get(ap1302->dev, "reset",
-					    GPIOD_OUT_LOW);
+					    GPIOD_OUT_HIGH);
 	if (IS_ERR(ap1302->reset_gpio)) {
 		dev_err(ap1302->dev, "Can't get reset GPIO: %ld\n",
 			PTR_ERR(ap1302->reset_gpio));
@@ -635,6 +694,8 @@ static int ap1302_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	ap1302_power_off(ap1302);
 
 	release_firmware(ap1302->fw);
 
