@@ -177,7 +177,8 @@ static int ap1302_read(struct ap1302_device *ap1302, u16 reg, u16 len,
 		ret = -EINVAL;
 
 	if (ret) {
-		dev_dbg(ap1302->dev, "Read reg failed. reg=0x%04X\n", reg);
+		dev_err(ap1302->dev, "Register 0x%04x read failed: %d\n",
+			reg, ret);
 		return ret;
 	}
 
@@ -200,7 +201,8 @@ static int ap1302_write(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
 		ret = -EINVAL;
 
 	if (ret) {
-		dev_dbg(ap1302->dev, "Write reg failed. reg=0x%04X\n", reg);
+		dev_err(ap1302->dev, "Register 0x%04x write failed: %d\n",
+			reg, ret);
 		return ret;
 	}
 
