@@ -21,7 +21,7 @@
 #include <media/media-entity.h>
 #include <media/v4l2-device.h>
 
-#define DRIVER_NAME "AP1302"
+#define DRIVER_NAME "ap1302"
 
 #define AP1302_CHIP_ID			0x265
 #define AP1302_REG16			2
