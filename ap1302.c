@@ -137,7 +137,7 @@ static const struct regmap_config ap1302_reg16_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static struct regmap_config ap1302_reg32_config = {
+static const struct regmap_config ap1302_reg32_config = {
 	.reg_bits = 16,
 	.val_bits = 32,
 	.reg_stride = 4,
