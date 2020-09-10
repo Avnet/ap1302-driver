@@ -453,12 +453,6 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	u16 win_pos = 0;
 	int ret;
 
-	dev_info(ap1302->dev, "Start to load firmware.\n");
-	if (!ap1302->fw) {
-		dev_err(ap1302->dev, "firmware not requested.\n");
-		return -EINVAL;
-	}
-
 	ap1302_fw = (const struct ap1302_firmware_header *) ap1302->fw->data;
 
 	/* The fw binary contains a header of struct ap1302_firmware_header.
