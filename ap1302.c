@@ -477,7 +477,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 		return ret;
 
 	/* Wait 1ms for PLL to lock. */
-	msleep(20);
+	usleep_range(1000, 2000);
 
 	/* Load the rest of bootdata content. */
 	ret = ap1302_write_fw_window(ap1302, &win_pos, fw_data + ap1302_fw->pll_init_size,
