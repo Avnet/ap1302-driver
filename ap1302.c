@@ -31,7 +31,7 @@
 
 #define REG_CHIP_VERSION		0x0000
 #define REG_CHIP_REV			0x0050
-#define REG_SIP_CRC			0xF052
+#define REG_SIP_CRC			0xf052
 #define REG_BOOTDATA_STAGE		0x6002
 
 struct ap1302_device {
@@ -385,7 +385,7 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 }
 
 /* When loading firmware, host writes firmware data from address 0x8000.
-   When the address reaches 0x9FFF, the next address should return to 0x8000.
+   When the address reaches 0x9fff, the next address should return to 0x8000.
    This function handles this address window and load firmware data to AP1302.
    win_pos indicates the offset within this window. Firmware loading procedure
    may call this function several times. win_pos records the current position
@@ -438,7 +438,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	fw_data = (u8 *)&ap1302_fw[1];
 
 	/* Clear crc register. */
-	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xFFFF);
+	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xffff);
 	if (ret)
 		return ret;
 
@@ -474,9 +474,9 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 		return -EAGAIN;
 	}
 
-	/* Write 0xFFFF to bootdata_stage register to indicate AP1302 that
+	/* Write 0xffff to bootdata_stage register to indicate AP1302 that
 	   the whole bootdata content has been loaded. */
-	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xFFFF);
+	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xffff);
 	if (ret)
 		return ret;
 
