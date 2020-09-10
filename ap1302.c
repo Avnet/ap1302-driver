@@ -644,12 +644,58 @@ err:
 	return ret;
 }
 
+static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
+				  struct device_node *node)
+{
+	struct ap1302_sensor *sensor;
+	const char *compat;
+	unsigned int i;
+	u32 reg;
+	int ret;
+
+	ret = of_property_read_u32(node, "reg", &reg);
+	if (ret < 0) {
+		dev_warn(ap1302->dev,
+			 "'reg' property missing in sensor node\n");
+		return -EINVAL;
+	}
+
+	if (reg >= ARRAY_SIZE(ap1302->sensors)) {
+		dev_warn(ap1302->dev, "Out-of-bounds 'reg' value %u\n",
+			 reg);
+		return -EINVAL;
+	}
+
+	sensor = &ap1302->sensors[reg];
+
+	ret = of_property_read_string(node, "compatible", &compat);
+	if (ret < 0)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302_sensor_info); ++i) {
+		const struct ap1302_sensor_info *info =
+			&ap1302_sensor_info[i];
+
+		if (!strcmp(info->compatible, compat)) {
+			sensor->info = info;
+			break;
+		}
+	}
+
+	if (sensor->info == &ap1302_sensor_info_none) {
+		dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
+			 compat);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
 	struct device_node *sensors;
 	struct device_node *node;
 	unsigned int i;
-	int ret;
 
 	/* Clock */
 	ap1302->clock = devm_clk_get(ap1302->dev, NULL);
@@ -687,46 +733,8 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	}
 
 	for_each_child_of_node(sensors, node) {
-		struct ap1302_sensor *sensor;
-		const char *compat;
-		unsigned int i;
-		u32 reg;
-
-		if (!of_node_name_eq(node, "sensor"))
-			continue;
-
-		ret = of_property_read_u32(node, "reg", &reg);
-		if (ret < 0) {
-			dev_warn(ap1302->dev,
-				 "'reg' property missing in sensor node\n");
-			continue;
-		}
-
-		if (reg >= ARRAY_SIZE(ap1302->sensors)) {
-			dev_warn(ap1302->dev, "Out-of-bounds 'reg' value %u\n",
-				 reg);
-			continue;
-		}
-
-		sensor = &ap1302->sensors[reg];
-
-		ret = of_property_read_string(node, "compatible", &compat);
-		if (ret < 0)
-			continue;
-
-		for (i = 0; i < ARRAY_SIZE(ap1302_sensor_info); ++i) {
-			const struct ap1302_sensor_info *info =
-				&ap1302_sensor_info[i];
-
-			if (!strcmp(info->compatible, compat)) {
-				sensor->info = info;
-				break;
-			}
-		}
-
-		if (sensor->info == &ap1302_sensor_info_none)
-			dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
-				 compat);
+		if (of_node_name_eq(node, "sensor"))
+			ap1302_parse_of_sensor(ap1302, node);
 	}
 
 	of_node_put(sensors);
