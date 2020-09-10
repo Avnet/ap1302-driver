@@ -60,6 +60,11 @@ struct ap1302_device {
 	struct clk *clock;
 };
 
+static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
+{
+	return container_of(sd, struct ap1302_device, sd);
+}
+
 struct ap1302_firmware_header {
 	u16 pll_init_size;
 	u16 crc;
@@ -77,24 +82,6 @@ enum {
 	MODE_AP1302_AR0144_DUAL,
 	MODE_AP1302_AR1335_SINGLE,
 	MODE_AP1302_MAX,
-};
-
-static const struct regmap_config ap1302_reg16_config = {
-	.reg_bits = 16,
-	.val_bits = 16,
-	.reg_stride = 2,
-	.reg_format_endian = REGMAP_ENDIAN_BIG,
-	.val_format_endian = REGMAP_ENDIAN_BIG,
-	.cache_type = REGCACHE_NONE,
-};
-
-static struct regmap_config ap1302_reg32_config = {
-	.reg_bits = 16,
-	.val_bits = 32,
-	.reg_stride = 4,
-	.reg_format_endian = REGMAP_ENDIAN_BIG,
-	.val_format_endian = REGMAP_ENDIAN_BIG,
-	.cache_type = REGCACHE_NONE,
 };
 
 struct ap1302_video_format {
@@ -137,18 +124,28 @@ static const struct ap1302_video_format supported_video_formats[] = {
 	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1, "4:2:2, packed, UYVY" },
 };
 
-/* -----------------------------------------------------------------------
- * Helper Functions
- */
-
-static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
-{
-	return container_of(sd, struct ap1302_device, sd);
-}
-
-/* -----------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
  * Register Configuration
  */
+
+static const struct regmap_config ap1302_reg16_config = {
+	.reg_bits = 16,
+	.val_bits = 16,
+	.reg_stride = 2,
+	.reg_format_endian = REGMAP_ENDIAN_BIG,
+	.val_format_endian = REGMAP_ENDIAN_BIG,
+	.cache_type = REGCACHE_NONE,
+};
+
+static struct regmap_config ap1302_reg32_config = {
+	.reg_bits = 16,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.reg_format_endian = REGMAP_ENDIAN_BIG,
+	.val_format_endian = REGMAP_ENDIAN_BIG,
+	.cache_type = REGCACHE_NONE,
+};
+
 static int ap1302_i2c_read_reg(struct ap1302_device *ap1302_dev, u16 reg, u16 len, void *val)
 {
 	int ret;
@@ -208,6 +205,10 @@ static void ap1302_reset(struct ap1302_device *ap1302_dev)
 	ap1302_reset_deassert(ap1302_dev);
 	msleep(10);
 }
+
+/* -----------------------------------------------------------------------------
+ * V4L2 Subdev Operations
+ */
 
 static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *ap1302_dev,
 						struct v4l2_subdev_pad_config *cfg,
@@ -324,71 +325,9 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 	.pad = &ap1302_pad_ops,
 };
 
-static int ap1302_parse_of(struct ap1302_device *ap1302_dev)
-{
-	int ret;
-	struct device_node *node = ap1302_dev->dev->of_node;
-
-	ret = of_property_read_u32(node, "onnn,cam-config", &ap1302_dev->cam_config);
-	if (ret < 0) {
-		dev_err(ap1302_dev->dev, "Missing onnn,cam-config property\n");
-		return ret;
-	}
-
-	if (ap1302_dev->cam_config >= MODE_AP1302_MAX) {
-		dev_err(ap1302_dev->dev, "Invalid cam-config\n");
-		return -EINVAL;
-	}
-
-	/* Clock */
-	ap1302_dev->clock = devm_clk_get(ap1302_dev->dev, NULL);
-	if (IS_ERR(ap1302_dev->clock)) {
-		dev_err(ap1302_dev->dev, "Failed to get clock: %ld\n",
-			PTR_ERR(ap1302_dev->clock));
-		return PTR_ERR(ap1302_dev->clock);
-	}
-
-	/* GPIOs */
-	ap1302_dev->reset_gpio = devm_gpiod_get(ap1302_dev->dev, "reset",
-						GPIOD_OUT_LOW);
-	if (IS_ERR(ap1302_dev->reset_gpio)) {
-		dev_err(ap1302_dev->dev, "Can't get reset GPIO: %ld\n",
-			PTR_ERR(ap1302_dev->reset_gpio));
-		return PTR_ERR(ap1302_dev->reset_gpio);
-	}
-
-	ap1302_dev->standby_gpio = devm_gpiod_get_optional(ap1302_dev->dev,
-							   "standby",
-							   GPIOD_OUT_LOW);
-	if (IS_ERR(ap1302_dev->standby_gpio)) {
-		dev_err(ap1302_dev->dev, "Can't get standby GPIO: %ld\n",
-			PTR_ERR(ap1302_dev->standby_gpio));
-		return PTR_ERR(ap1302_dev->standby_gpio);
-	}
-
-	return 0;
-}
-
-static int ap1302_detect_chip(struct ap1302_device *ap1302_dev)
-{
-	unsigned int reg_val = 0;
-	int ret;
-
-	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
-	if (ret || (reg_val != AP1302_CHIP_ID)) {
-		dev_err(ap1302_dev->dev,
-			"Chip version does not match. ret=%d ver=0x%04x\n", ret, reg_val);
-		return ret;
-	}
-	dev_info(ap1302_dev->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
-
-	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_REV, AP1302_REG16, &reg_val);
-	if (ret)
-		return ret;
-	dev_info(ap1302_dev->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
-
-	return 0;
-}
+/* -----------------------------------------------------------------------------
+ * Firmware Handling
+ */
 
 static int ap1302_request_firmware(struct ap1302_device *ap1302_dev)
 {
@@ -508,6 +447,31 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
 	return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * Hardware Configuration
+ */
+
+static int ap1302_detect_chip(struct ap1302_device *ap1302_dev)
+{
+	unsigned int reg_val = 0;
+	int ret;
+
+	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
+	if (ret || (reg_val != AP1302_CHIP_ID)) {
+		dev_err(ap1302_dev->dev,
+			"Chip version does not match. ret=%d ver=0x%04x\n", ret, reg_val);
+		return ret;
+	}
+	dev_info(ap1302_dev->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
+
+	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_REV, AP1302_REG16, &reg_val);
+	if (ret)
+		return ret;
+	dev_info(ap1302_dev->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
+
+	return 0;
+}
+
 static int ap1302_config_hw(struct ap1302_device *ap1302_dev)
 {
 	int ret;
@@ -531,6 +495,10 @@ static int ap1302_config_hw(struct ap1302_device *ap1302_dev)
 
 	return ret;
 }
+
+/* -----------------------------------------------------------------------------
+ * Probe & Remove
+ */
 
 static int ap1302_config_v4l2(struct ap1302_device *ap1302_dev)
 {
@@ -583,6 +551,51 @@ err:
 	media_entity_cleanup(&sd->entity);
 
 	return ret;
+}
+
+static int ap1302_parse_of(struct ap1302_device *ap1302_dev)
+{
+	int ret;
+	struct device_node *node = ap1302_dev->dev->of_node;
+
+	ret = of_property_read_u32(node, "onnn,cam-config", &ap1302_dev->cam_config);
+	if (ret < 0) {
+		dev_err(ap1302_dev->dev, "Missing onnn,cam-config property\n");
+		return ret;
+	}
+
+	if (ap1302_dev->cam_config >= MODE_AP1302_MAX) {
+		dev_err(ap1302_dev->dev, "Invalid cam-config\n");
+		return -EINVAL;
+	}
+
+	/* Clock */
+	ap1302_dev->clock = devm_clk_get(ap1302_dev->dev, NULL);
+	if (IS_ERR(ap1302_dev->clock)) {
+		dev_err(ap1302_dev->dev, "Failed to get clock: %ld\n",
+			PTR_ERR(ap1302_dev->clock));
+		return PTR_ERR(ap1302_dev->clock);
+	}
+
+	/* GPIOs */
+	ap1302_dev->reset_gpio = devm_gpiod_get(ap1302_dev->dev, "reset",
+						GPIOD_OUT_LOW);
+	if (IS_ERR(ap1302_dev->reset_gpio)) {
+		dev_err(ap1302_dev->dev, "Can't get reset GPIO: %ld\n",
+			PTR_ERR(ap1302_dev->reset_gpio));
+		return PTR_ERR(ap1302_dev->reset_gpio);
+	}
+
+	ap1302_dev->standby_gpio = devm_gpiod_get_optional(ap1302_dev->dev,
+							   "standby",
+							   GPIOD_OUT_LOW);
+	if (IS_ERR(ap1302_dev->standby_gpio)) {
+		dev_err(ap1302_dev->dev, "Can't get standby GPIO: %ld\n",
+			PTR_ERR(ap1302_dev->standby_gpio));
+		return PTR_ERR(ap1302_dev->standby_gpio);
+	}
+
+	return 0;
 }
 
 static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *id)
