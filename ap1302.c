@@ -388,7 +388,7 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 };
 
 /* -----------------------------------------------------------------------------
- * Firmware Handling
+ * Boot & Firmware Handling
  */
 
 static int ap1302_request_firmware(struct ap1302_device *ap1302)
@@ -413,31 +413,41 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	return 0;
 }
 
-/* When loading firmware, host writes firmware data from address 0x8000.
-   When the address reaches 0x9fff, the next address should return to 0x8000.
-   This function handles this address window and load firmware data to AP1302.
-   win_pos indicates the offset within this window. Firmware loading procedure
-   may call this function several times. win_pos records the current position
-   that has been written to.*/
-static int ap1302_write_fw_window(struct ap1302_device *ap1302,
-				  u16 *win_pos, const u8 *buf, u32 len)
+/*
+ * ap1302_write_fw_window() - Write a piece of firmware to the AP1302
+ * @win_pos: Firmware load window current position
+ * @buf: Firmware data buffer
+ * @len: Firmware data length
+ *
+ * The firmware is loaded through a window in the registers space. Writes are
+ * sequential starting at address 0x8000, and must wrap around when reaching
+ * 0x9fff. This function write the firmware data stored in @buf to the AP1302,
+ * keeping track of the window position in the @win_pos argument.
+ */
+static int ap1302_write_fw_window(struct ap1302_device *ap1302, const u8 *buf,
+				  u32 len, unsigned int *win_pos)
 {
-	int ret;
-	u32 pos;
-	u32 sub_len;
+	while (len > 0) {
+		unsigned int write_addr;
+		unsigned int write_size;
+		int ret;
 
-	for (pos = 0; pos < len; pos += sub_len) {
-		if (len - pos < AP1302_FW_WINDOW_SIZE - *win_pos)
-			sub_len = len - pos;
-		else
-			sub_len = AP1302_FW_WINDOW_SIZE - *win_pos;
+		/*
+		 * Write at most len bytes, from the current position to the
+		 * end of the window.
+		 */
+		write_addr = *win_pos + AP1302_FW_WINDOW_OFFSET;
+		write_size = min(len, AP1302_FW_WINDOW_SIZE - *win_pos);
 
-		ret = regmap_raw_write(ap1302->regmap16, *win_pos + AP1302_FW_WINDOW_OFFSET,
-					buf + pos, sub_len);
+		ret = regmap_raw_write(ap1302->regmap16, write_addr, buf,
+				       write_size);
 		if (ret)
 			return ret;
 
-		*win_pos += sub_len;
+		buf += write_size;
+		len -= write_size;
+
+		*win_pos += write_size;
 		if (*win_pos >= AP1302_FW_WINDOW_SIZE)
 			*win_pos = 0;
 	}
@@ -447,70 +457,78 @@ static int ap1302_write_fw_window(struct ap1302_device *ap1302,
 
 static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
-	const struct ap1302_firmware_header *ap1302_fw;
+	const struct ap1302_firmware_header *fw_hdr;
+	unsigned int fw_size;
 	const u8 *fw_data;
-	unsigned int reg_val = 0;
-	u16 win_pos = 0;
+	unsigned int win_pos = 0;
+	unsigned int crc;
 	int ret;
 
-	ap1302_fw = (const struct ap1302_firmware_header *) ap1302->fw->data;
+	/*
+	 * The firmware binary contains a header defined by the
+	 * ap1302_firmware_header structure. The firmware itself (also referred
+	 * to as bootdata) follows the header. Perform sanity checks to ensure
+	 * the firmware is valid.
+	 */
+	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
+	fw_data = (u8 *)&fw_hdr[1];
+	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
-	/* The fw binary contains a header of struct ap1302_firmware_header.
-	   Following the header is the bootdata of AP1302.
-	   The bootdata pointer can be referenced as &ap1302_fw[1]. */
-	fw_data = (u8 *)&ap1302_fw[1];
+	if (fw_hdr->pll_init_size > fw_size) {
+		dev_err(ap1302->dev,
+			"Invalid firmware: PLL init size too large\n");
+		return -EINVAL;
+	}
 
-	/* Clear crc register. */
+	/* Clear the CRC register. */
 	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xffff);
 	if (ret)
 		return ret;
 
-	/* Load FW data for PLL init stage. */
-	ret = ap1302_write_fw_window(ap1302, &win_pos, fw_data, ap1302_fw->pll_init_size);
+	/*
+	 * Load the PLL initialization settings, set the bootdata stage to 2 to
+	 * apply the basic_init_hp settings, and wait 1ms for the PLL to lock.
+	 */
+	ret = ap1302_write_fw_window(ap1302, fw_data, fw_hdr->pll_init_size,
+				     &win_pos);
 	if (ret)
 		return ret;
 
-	/* Write 2 to bootdata_stage register to apply basic_init_hp
-	   settings and enable PLL. */
 	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
 	if (ret)
 		return ret;
 
-	/* Wait 1ms for PLL to lock. */
 	usleep_range(1000, 2000);
 
-	/* Load the rest of bootdata content. */
-	ret = ap1302_write_fw_window(ap1302, &win_pos, fw_data + ap1302_fw->pll_init_size,
-			ap1302->fw->size - sizeof(*ap1302_fw) - ap1302_fw->pll_init_size);
+	/* Load the rest of the bootdata content and verify the CRC. */
+	ret = ap1302_write_fw_window(ap1302, fw_data + fw_hdr->pll_init_size,
+				     fw_size - fw_hdr->pll_init_size, &win_pos);
 	if (ret)
 		return ret;
+
 	msleep(40);
 
-	/* Check crc. */
-	ret = ap1302_read(ap1302, REG_SIP_CRC, AP1302_REG16, &reg_val);
+	ret = ap1302_read(ap1302, REG_SIP_CRC, AP1302_REG16, &crc);
 	if (ret)
 		return ret;
 
-	if (reg_val != ap1302_fw->crc) {
-		dev_err(ap1302->dev, "crc does not match. T:0x%04X F:0x%04X\n",
-			ap1302_fw->crc, reg_val);
+	if (crc != fw_hdr->crc) {
+		dev_warn(ap1302->dev,
+			 "CRC mismatch: expected 0x%04x, got 0x%04x\n",
+			 fw_hdr->crc, crc);
 		return -EAGAIN;
 	}
 
-	/* Write 0xffff to bootdata_stage register to indicate AP1302 that
-	   the whole bootdata content has been loaded. */
+	/*
+	 * Write 0xffff to the bootdata_stage register to indicate to the
+	 * AP1302 that the whole bootdata content has been loaded.
+	 */
 	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xffff);
 	if (ret)
 		return ret;
 
-	dev_info(ap1302->dev, "Load firmware successfully.\n");
-
 	return 0;
 }
-
-/* -----------------------------------------------------------------------------
- * Hardware Configuration
- */
 
 static int ap1302_detect_chip(struct ap1302_device *ap1302)
 {
@@ -546,10 +564,8 @@ static int ap1302_config_hw(struct ap1302_device *ap1302)
 	int ret;
 
 	ret = ap1302_request_firmware(ap1302);
-	if (ret) {
-		dev_err(ap1302->dev, "Cannot request ap1302 firmware.\n");
+	if (ret)
 		return ret;
-	}
 
 	for (retries = 0; retries < MAX_FW_LOAD_RETRIES; ++retries) {
 		ret = ap1302_power_on(ap1302);
