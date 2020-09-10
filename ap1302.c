@@ -118,6 +118,13 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 			{ },
 		},
 	}, {
+		.compatible = "onnn,ar0330",
+		.name = "ar0330",
+		.resolutions = (const struct ap1302_resolution[]) {
+			{ 2304, 1536 },
+			{ },
+		},
+	}, {
 		.compatible = "onnn,ar1335",
 		.name = "ar1335",
 		.resolutions = (const struct ap1302_resolution[]) {
