@@ -76,12 +76,6 @@ struct ap1302_firmware_header {
 	u16 crc;
 } __packed;
 
-/* There's no standard V4L2_CID_GREEN_BALANCE defined in the
- * linux kernel. Let's borrow V4L2_CID_CHROMA_GAIN on green
- * balance adjustment
- */
-#define V4L2_CID_GREEN_BALANCE	V4L2_CID_CHROMA_GAIN
-
 #define MAX_FW_LOAD_RETRIES 3
 
 struct ap1302_video_format {
