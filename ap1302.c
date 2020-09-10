@@ -518,21 +518,28 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 
 static int ap1302_detect_chip(struct ap1302_device *ap1302)
 {
-	unsigned int reg_val = 0;
+	unsigned int version;
+	unsigned int revision;
 	int ret;
 
-	ret = ap1302_read(ap1302, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
-	if (ret || (reg_val != AP1302_CHIP_ID)) {
-		dev_err(ap1302->dev,
-			"Chip version does not match. ret=%d ver=0x%04x\n", ret, reg_val);
-		return ret;
-	}
-	dev_info(ap1302->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
-
-	ret = ap1302_read(ap1302, REG_CHIP_REV, AP1302_REG16, &reg_val);
+	ret = ap1302_read(ap1302, REG_CHIP_VERSION, AP1302_REG16, &version);
 	if (ret)
 		return ret;
-	dev_info(ap1302->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
+
+	ret = ap1302_read(ap1302, REG_CHIP_REV, AP1302_REG16, &revision);
+	if (ret)
+		return ret;
+
+	if (version != AP1302_CHIP_ID) {
+		dev_err(ap1302->dev,
+			"Invalid chip version, expected 0x%04x, got 0x%04x\n",
+			AP1302_CHIP_ID, version);
+		return -EINVAL;
+	}
+
+	dev_info(ap1302->dev, "AP1302 revision %u.%u.%u detected\n",
+		 (revision & 0xf000) >> 12, (revision & 0x0f00) >> 8,
+		 revision & 0x00ff);
 
 	return 0;
 }
