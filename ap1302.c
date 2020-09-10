@@ -146,42 +146,42 @@ static const struct regmap_config ap1302_reg32_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int ap1302_i2c_read_reg(struct ap1302_device *ap1302_dev, u16 reg, u16 len, void *val)
+static int ap1302_i2c_read_reg(struct ap1302_device *ap1302, u16 reg, u16 len, void *val)
 {
 	int ret;
 
 	if (len == AP1302_REG16)
-		ret = regmap_read(ap1302_dev->regmap16, reg, val);
+		ret = regmap_read(ap1302->regmap16, reg, val);
 	else if (len == AP1302_REG32)
-		ret = regmap_read(ap1302_dev->regmap32, reg, val);
+		ret = regmap_read(ap1302->regmap32, reg, val);
 	else
 		ret = -EINVAL;
 
 	if (ret) {
-		dev_dbg(ap1302_dev->dev, "Read reg failed. reg=0x%04X\n", reg);
+		dev_dbg(ap1302->dev, "Read reg failed. reg=0x%04X\n", reg);
 		return ret;
 	}
 
 	if (len == AP1302_REG16)
-		dev_dbg(ap1302_dev->dev, "read_reg[0x%04X] = 0x%04X\n", reg, *(u16 *)val);
+		dev_dbg(ap1302->dev, "read_reg[0x%04X] = 0x%04X\n", reg, *(u16 *)val);
 	else
-		dev_dbg(ap1302_dev->dev, "read_reg[0x%04X] = 0x%08X\n", reg, *(u32 *)val);
+		dev_dbg(ap1302->dev, "read_reg[0x%04X] = 0x%08X\n", reg, *(u32 *)val);
 
 	return ret;
 }
 
-static int ap1302_i2c_write_reg(struct ap1302_device *ap1302_dev, u16 reg, u16 len, u32 val)
+static int ap1302_i2c_write_reg(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
 {
 	int ret;
 	if (len == AP1302_REG16)
-		ret = regmap_write(ap1302_dev->regmap16, reg, val);
+		ret = regmap_write(ap1302->regmap16, reg, val);
 	else if (len == AP1302_REG32)
-		ret = regmap_write(ap1302_dev->regmap32, reg, val);
+		ret = regmap_write(ap1302->regmap32, reg, val);
 	else
 		ret = -EINVAL;
 
 	if (ret) {
-		dev_dbg(ap1302_dev->dev, "Write reg failed. reg=0x%04X\n", reg);
+		dev_dbg(ap1302->dev, "Write reg failed. reg=0x%04X\n", reg);
 		return ret;
 	}
 
@@ -198,11 +198,11 @@ static void ap1302_reset_deassert(struct ap1302_device *dev)
 	gpiod_set_value(dev->reset_gpio, 0);
 }
 
-static void ap1302_reset(struct ap1302_device *ap1302_dev)
+static void ap1302_reset(struct ap1302_device *ap1302)
 {
-	ap1302_reset_assert(ap1302_dev);
+	ap1302_reset_assert(ap1302);
 	msleep(10);
-	ap1302_reset_deassert(ap1302_dev);
+	ap1302_reset_deassert(ap1302);
 	msleep(10);
 }
 
@@ -210,15 +210,15 @@ static void ap1302_reset(struct ap1302_device *ap1302_dev)
  * V4L2 Subdev Operations
  */
 
-static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *ap1302_dev,
+static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *ap1302,
 						struct v4l2_subdev_pad_config *cfg,
 						unsigned int pad, u32 which)
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&ap1302_dev->sd, cfg, pad);
+		return v4l2_subdev_get_try_format(&ap1302->sd, cfg, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &ap1302_dev->formats[pad];
+		return &ap1302->formats[pad];
 	default:
 		return NULL;
 	}
@@ -228,10 +228,10 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
-	struct ap1302_device *ap1302_dev = to_ap1302(sd);
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 	int pad = fmt->pad;
 
-	fmt->format = *ap1302_get_pad_format(ap1302_dev, cfg, pad, fmt->which);
+	fmt->format = *ap1302_get_pad_format(ap1302, cfg, pad, fmt->which);
 	return 0;
 }
 
@@ -267,7 +267,7 @@ static void ap1302_res_roundup(u32 *width, u32 *height, u32 mode)
 static int ap1302_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
 {
 	int i;
-	struct ap1302_device *ap1302_dev = to_ap1302(sd);
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 
 	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
 		if (supported_video_formats[i].code == fmt->code)
@@ -281,7 +281,7 @@ static int ap1302_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt
 	}
 
 	/* Find suitable supported resolution */
-	ap1302_res_roundup(&fmt->width, &fmt->height, ap1302_dev->cam_config);
+	ap1302_res_roundup(&fmt->width, &fmt->height, ap1302->cam_config);
 
 	fmt->field = V4L2_FIELD_NONE;
 	fmt->colorspace = V4L2_COLORSPACE_SRGB;
@@ -293,18 +293,18 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
-	struct ap1302_device *ap1302_dev = to_ap1302(sd);
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 
 	struct v4l2_mbus_framefmt *fmt_ptr;
 	struct v4l2_mbus_framefmt resp_fmt;
 
-	fmt_ptr = ap1302_get_pad_format(ap1302_dev, cfg, fmt->pad, fmt->which);
+	fmt_ptr = ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
 	resp_fmt = fmt->format;
 
-	dev_dbg(ap1302_dev->dev, "Configure source pad %d\n", fmt->pad);
+	dev_dbg(ap1302->dev, "Configure source pad %d\n", fmt->pad);
 	ap1302_try_mbus_fmt(sd, &resp_fmt);
 
-	dev_dbg(ap1302_dev->dev, "width %d height %d\n", resp_fmt.width, resp_fmt.height);
+	dev_dbg(ap1302->dev, "width %d height %d\n", resp_fmt.width, resp_fmt.height);
 
 	*fmt_ptr = resp_fmt;
 	fmt->format = resp_fmt;
@@ -329,19 +329,19 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
  * Firmware Handling
  */
 
-static int ap1302_request_firmware(struct ap1302_device *ap1302_dev)
+static int ap1302_request_firmware(struct ap1302_device *ap1302)
 {
 	int ret;
 
-	if (ap1302_dev->cam_config == MODE_AP1302_AR0144_DUAL)
-		ret = request_firmware(&ap1302_dev->fw, "ar0144_dual_fw.bin", ap1302_dev->dev);
-	else if (ap1302_dev->cam_config == MODE_AP1302_AR1335_SINGLE)
-		ret = request_firmware(&ap1302_dev->fw, "ar1335_single_fw.bin", ap1302_dev->dev);
+	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL)
+		ret = request_firmware(&ap1302->fw, "ar0144_dual_fw.bin", ap1302->dev);
+	else if (ap1302->cam_config == MODE_AP1302_AR1335_SINGLE)
+		ret = request_firmware(&ap1302->fw, "ar1335_single_fw.bin", ap1302->dev);
 	else
 		ret = -EINVAL;
 
 	if (ret)
-		dev_err(ap1302_dev->dev, "ap1302_request_firmware failed. ret=%d\n", ret);
+		dev_err(ap1302->dev, "ap1302_request_firmware failed. ret=%d\n", ret);
 
 	return ret;
 }
@@ -352,7 +352,7 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302_dev)
    win_pos indicates the offset within this window. Firmware loading procedure
    may call this function several times. win_pos records the current position
    that has been written to.*/
-static int ap1302_write_fw_window(struct ap1302_device *ap1302_dev,
+static int ap1302_write_fw_window(struct ap1302_device *ap1302,
 				  u16 *win_pos, const u8 *buf, u32 len)
 {
 	int ret;
@@ -365,7 +365,7 @@ static int ap1302_write_fw_window(struct ap1302_device *ap1302_dev,
 		else
 			sub_len = AP1302_FW_WINDOW_SIZE - *win_pos;
 
-		ret = regmap_raw_write(ap1302_dev->regmap16, *win_pos + AP1302_FW_WINDOW_OFFSET,
+		ret = regmap_raw_write(ap1302->regmap16, *win_pos + AP1302_FW_WINDOW_OFFSET,
 					buf + pos, sub_len);
 		if (ret)
 			return ret;
@@ -378,7 +378,7 @@ static int ap1302_write_fw_window(struct ap1302_device *ap1302_dev,
 	return 0;
 }
 
-static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
+static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *ap1302_fw;
 	const u8 *fw_data;
@@ -386,13 +386,13 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
 	u16 win_pos = 0;
 	int ret;
 
-	dev_info(ap1302_dev->dev, "Start to load firmware.\n");
-	if (!ap1302_dev->fw) {
-		dev_err(ap1302_dev->dev, "firmware not requested.\n");
+	dev_info(ap1302->dev, "Start to load firmware.\n");
+	if (!ap1302->fw) {
+		dev_err(ap1302->dev, "firmware not requested.\n");
 		return -EINVAL;
 	}
 
-	ap1302_fw = (const struct ap1302_firmware_header *) ap1302_dev->fw->data;
+	ap1302_fw = (const struct ap1302_firmware_header *) ap1302->fw->data;
 
 	/* The fw binary contains a header of struct ap1302_firmware_header.
 	   Following the header is the bootdata of AP1302.
@@ -400,18 +400,18 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
 	fw_data = (u8 *)&ap1302_fw[1];
 
 	/* Clear crc register. */
-	ret = ap1302_i2c_write_reg(ap1302_dev, REG_SIP_CRC, AP1302_REG16, 0xFFFF);
+	ret = ap1302_i2c_write_reg(ap1302, REG_SIP_CRC, AP1302_REG16, 0xFFFF);
 	if (ret)
 		return ret;
 
 	/* Load FW data for PLL init stage. */
-	ret = ap1302_write_fw_window(ap1302_dev, &win_pos, fw_data, ap1302_fw->pll_init_size);
+	ret = ap1302_write_fw_window(ap1302, &win_pos, fw_data, ap1302_fw->pll_init_size);
 	if (ret)
 		return ret;
 
 	/* Write 2 to bootdata_stage register to apply basic_init_hp
 	   settings and enable PLL. */
-	ret = ap1302_i2c_write_reg(ap1302_dev, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
+	ret = ap1302_i2c_write_reg(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
 	if (ret)
 		return ret;
 
@@ -419,30 +419,30 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
 	msleep(20);
 
 	/* Load the rest of bootdata content. */
-	ret = ap1302_write_fw_window(ap1302_dev, &win_pos, fw_data + ap1302_fw->pll_init_size,
-			ap1302_dev->fw->size - sizeof(*ap1302_fw) - ap1302_fw->pll_init_size);
+	ret = ap1302_write_fw_window(ap1302, &win_pos, fw_data + ap1302_fw->pll_init_size,
+			ap1302->fw->size - sizeof(*ap1302_fw) - ap1302_fw->pll_init_size);
 	if (ret)
 		return ret;
 	msleep(40);
 
 	/* Check crc. */
-	ret = ap1302_i2c_read_reg(ap1302_dev, REG_SIP_CRC, AP1302_REG16, &reg_val);
+	ret = ap1302_i2c_read_reg(ap1302, REG_SIP_CRC, AP1302_REG16, &reg_val);
 	if (ret)
 		return ret;
 
 	if (reg_val != ap1302_fw->crc) {
-		dev_err(ap1302_dev->dev, "crc does not match. T:0x%04X F:0x%04X\n",
-					ap1302_fw->crc, reg_val);
+		dev_err(ap1302->dev, "crc does not match. T:0x%04X F:0x%04X\n",
+			ap1302_fw->crc, reg_val);
 		return -EAGAIN;
 	}
 
 	/* Write 0xFFFF to bootdata_stage register to indicate AP1302 that
 	   the whole bootdata content has been loaded. */
-	ret = ap1302_i2c_write_reg(ap1302_dev, REG_BOOTDATA_STAGE, AP1302_REG16, 0xFFFF);
+	ret = ap1302_i2c_write_reg(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xFFFF);
 	if (ret)
 		return ret;
 
-	dev_info(ap1302_dev->dev, "Load firmware successfully.\n");
+	dev_info(ap1302->dev, "Load firmware successfully.\n");
 
 	return 0;
 }
@@ -451,45 +451,45 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302_dev)
  * Hardware Configuration
  */
 
-static int ap1302_detect_chip(struct ap1302_device *ap1302_dev)
+static int ap1302_detect_chip(struct ap1302_device *ap1302)
 {
 	unsigned int reg_val = 0;
 	int ret;
 
-	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
+	ret = ap1302_i2c_read_reg(ap1302, REG_CHIP_VERSION, AP1302_REG16, &reg_val);
 	if (ret || (reg_val != AP1302_CHIP_ID)) {
-		dev_err(ap1302_dev->dev,
+		dev_err(ap1302->dev,
 			"Chip version does not match. ret=%d ver=0x%04x\n", ret, reg_val);
 		return ret;
 	}
-	dev_info(ap1302_dev->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
+	dev_info(ap1302->dev, "AP1302 Chip ID is 0x%X\n", reg_val);
 
-	ret = ap1302_i2c_read_reg(ap1302_dev, REG_CHIP_REV, AP1302_REG16, &reg_val);
+	ret = ap1302_i2c_read_reg(ap1302, REG_CHIP_REV, AP1302_REG16, &reg_val);
 	if (ret)
 		return ret;
-	dev_info(ap1302_dev->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
+	dev_info(ap1302->dev, "AP1302 Chip Rev is 0x%X\n", reg_val);
 
 	return 0;
 }
 
-static int ap1302_config_hw(struct ap1302_device *ap1302_dev)
+static int ap1302_config_hw(struct ap1302_device *ap1302)
 {
 	int ret;
 	int nb_retries = 0;
 
-	ret = ap1302_request_firmware(ap1302_dev);
+	ret = ap1302_request_firmware(ap1302);
 	if (ret) {
-		dev_err(ap1302_dev->dev, "Cannot request ap1302 firmware.\n");
+		dev_err(ap1302->dev, "Cannot request ap1302 firmware.\n");
 		return ret;
 	}
 
 	do {
-		ap1302_reset(ap1302_dev);
-		ret = ap1302_detect_chip(ap1302_dev);
+		ap1302_reset(ap1302);
+		ret = ap1302_detect_chip(ap1302);
 		if (ret)
 			break;
 
-		ret = ap1302_load_firmware(ap1302_dev);
+		ret = ap1302_load_firmware(ap1302);
 		nb_retries++;
 	}while (ret == -EAGAIN && nb_retries < MAX_FW_LOAD_RETRIES);
 
@@ -500,48 +500,48 @@ static int ap1302_config_hw(struct ap1302_device *ap1302_dev)
  * Probe & Remove
  */
 
-static int ap1302_config_v4l2(struct ap1302_device *ap1302_dev)
+static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 {
 	struct v4l2_subdev *sd;
 	int ret;
 
-	sd = &ap1302_dev->sd;
-	sd->dev = ap1302_dev->dev;
-	v4l2_i2c_subdev_init(sd, ap1302_dev->client, &ap1302_subdev_ops);
+	sd = &ap1302->sd;
+	sd->dev = ap1302->dev;
+	v4l2_i2c_subdev_init(sd, ap1302->client, &ap1302_subdev_ops);
 
 	strlcpy(sd->name, DRIVER_NAME, sizeof(sd->name));
 	strlcat(sd->name, ".", sizeof(sd->name));
-	strlcat(sd->name, dev_name(ap1302_dev->dev), sizeof(sd->name));
-	dev_dbg(ap1302_dev->dev, "name %s\n", sd->name);
+	strlcat(sd->name, dev_name(ap1302->dev), sizeof(sd->name));
+	dev_dbg(ap1302->dev, "name %s\n", sd->name);
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	sd->entity.ops = &ap1302_media_ops;
 
-	ap1302_dev->pad.flags = MEDIA_PAD_FL_SOURCE;
+	ap1302->pad.flags = MEDIA_PAD_FL_SOURCE;
 
-	ret = media_entity_pads_init(&sd->entity, 1, &ap1302_dev->pad);
+	ret = media_entity_pads_init(&sd->entity, 1, &ap1302->pad);
 	if (ret < 0) {
-		dev_err(ap1302_dev->dev, "media_entity_init failed %d\n", ret);
+		dev_err(ap1302->dev, "media_entity_init failed %d\n", ret);
 		return ret;
 	}
 
-	if (ap1302_dev->cam_config == MODE_AP1302_AR0144_DUAL) {
-		ap1302_dev->formats[0].width = resolutions_ar0144_dual[0].width;
-		ap1302_dev->formats[0].height = resolutions_ar0144_dual[0].height;
+	if (ap1302->cam_config == MODE_AP1302_AR0144_DUAL) {
+		ap1302->formats[0].width = resolutions_ar0144_dual[0].width;
+		ap1302->formats[0].height = resolutions_ar0144_dual[0].height;
 	}
 	else {
-		ap1302_dev->formats[0].width = resolutions_ar1335_single[0].width;
-		ap1302_dev->formats[0].height = resolutions_ar1335_single[0].height;
+		ap1302->formats[0].width = resolutions_ar1335_single[0].width;
+		ap1302->formats[0].height = resolutions_ar1335_single[0].height;
 	}
 
-	ap1302_dev->formats[0].field = V4L2_FIELD_NONE;
-	ap1302_dev->formats[0].code = MEDIA_BUS_FMT_UYVY8_1X16;
-	ap1302_dev->formats[0].colorspace = V4L2_COLORSPACE_SRGB;
+	ap1302->formats[0].field = V4L2_FIELD_NONE;
+	ap1302->formats[0].code = MEDIA_BUS_FMT_UYVY8_1X16;
+	ap1302->formats[0].colorspace = V4L2_COLORSPACE_SRGB;
 
 	ret = v4l2_async_register_subdev(sd);
 	if (ret < 0) {
-		dev_err(ap1302_dev->dev, "v4l2_async_register_subdev failed %d\n", ret);
+		dev_err(ap1302->dev, "v4l2_async_register_subdev failed %d\n", ret);
 		goto err;
 	}
 
@@ -553,46 +553,45 @@ err:
 	return ret;
 }
 
-static int ap1302_parse_of(struct ap1302_device *ap1302_dev)
+static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
 	int ret;
-	struct device_node *node = ap1302_dev->dev->of_node;
+	struct device_node *node = ap1302->dev->of_node;
 
-	ret = of_property_read_u32(node, "onnn,cam-config", &ap1302_dev->cam_config);
+	ret = of_property_read_u32(node, "onnn,cam-config", &ap1302->cam_config);
 	if (ret < 0) {
-		dev_err(ap1302_dev->dev, "Missing onnn,cam-config property\n");
+		dev_err(ap1302->dev, "Missing onnn,cam-config property\n");
 		return ret;
 	}
 
-	if (ap1302_dev->cam_config >= MODE_AP1302_MAX) {
-		dev_err(ap1302_dev->dev, "Invalid cam-config\n");
+	if (ap1302->cam_config >= MODE_AP1302_MAX) {
+		dev_err(ap1302->dev, "Invalid cam-config\n");
 		return -EINVAL;
 	}
 
 	/* Clock */
-	ap1302_dev->clock = devm_clk_get(ap1302_dev->dev, NULL);
-	if (IS_ERR(ap1302_dev->clock)) {
-		dev_err(ap1302_dev->dev, "Failed to get clock: %ld\n",
-			PTR_ERR(ap1302_dev->clock));
-		return PTR_ERR(ap1302_dev->clock);
+	ap1302->clock = devm_clk_get(ap1302->dev, NULL);
+	if (IS_ERR(ap1302->clock)) {
+		dev_err(ap1302->dev, "Failed to get clock: %ld\n",
+			PTR_ERR(ap1302->clock));
+		return PTR_ERR(ap1302->clock);
 	}
 
 	/* GPIOs */
-	ap1302_dev->reset_gpio = devm_gpiod_get(ap1302_dev->dev, "reset",
-						GPIOD_OUT_LOW);
-	if (IS_ERR(ap1302_dev->reset_gpio)) {
-		dev_err(ap1302_dev->dev, "Can't get reset GPIO: %ld\n",
-			PTR_ERR(ap1302_dev->reset_gpio));
-		return PTR_ERR(ap1302_dev->reset_gpio);
+	ap1302->reset_gpio = devm_gpiod_get(ap1302->dev, "reset",
+					    GPIOD_OUT_LOW);
+	if (IS_ERR(ap1302->reset_gpio)) {
+		dev_err(ap1302->dev, "Can't get reset GPIO: %ld\n",
+			PTR_ERR(ap1302->reset_gpio));
+		return PTR_ERR(ap1302->reset_gpio);
 	}
 
-	ap1302_dev->standby_gpio = devm_gpiod_get_optional(ap1302_dev->dev,
-							   "standby",
-							   GPIOD_OUT_LOW);
-	if (IS_ERR(ap1302_dev->standby_gpio)) {
-		dev_err(ap1302_dev->dev, "Can't get standby GPIO: %ld\n",
-			PTR_ERR(ap1302_dev->standby_gpio));
-		return PTR_ERR(ap1302_dev->standby_gpio);
+	ap1302->standby_gpio = devm_gpiod_get_optional(ap1302->dev, "standby",
+						       GPIOD_OUT_LOW);
+	if (IS_ERR(ap1302->standby_gpio)) {
+		dev_err(ap1302->dev, "Can't get standby GPIO: %ld\n",
+			PTR_ERR(ap1302->standby_gpio));
+		return PTR_ERR(ap1302->standby_gpio);
 	}
 
 	return 0;
@@ -600,54 +599,54 @@ static int ap1302_parse_of(struct ap1302_device *ap1302_dev)
 
 static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
-	struct ap1302_device *ap1302_dev;
+	struct ap1302_device *ap1302;
 	int ret;
 
 	dev_info(&client->dev, "Probe: %s\n", DRIVER_NAME);
 
-	ap1302_dev = devm_kzalloc(&client->dev, sizeof(*ap1302_dev), GFP_KERNEL);
-	if (!ap1302_dev)
+	ap1302 = devm_kzalloc(&client->dev, sizeof(*ap1302), GFP_KERNEL);
+	if (!ap1302)
 		return -ENOMEM;
 
-	ap1302_dev->dev = &client->dev;
-	ap1302_dev->client = client;
+	ap1302->dev = &client->dev;
+	ap1302->client = client;
 
-	ap1302_dev->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
-	if (IS_ERR(ap1302_dev->regmap16)) {
-		dev_err(ap1302_dev->dev, "regmap16 init failed: %ld\n",
-			PTR_ERR(ap1302_dev->regmap16));
+	ap1302->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
+	if (IS_ERR(ap1302->regmap16)) {
+		dev_err(ap1302->dev, "regmap16 init failed: %ld\n",
+			PTR_ERR(ap1302->regmap16));
 		return -ENODEV;
 	}
 
-	ap1302_dev->regmap32 = devm_regmap_init_i2c(client, &ap1302_reg32_config);
-	if (IS_ERR(ap1302_dev->regmap32)) {
-		dev_err(ap1302_dev->dev, "regmap32 init failed: %ld\n",
-			PTR_ERR(ap1302_dev->regmap32));
+	ap1302->regmap32 = devm_regmap_init_i2c(client, &ap1302_reg32_config);
+	if (IS_ERR(ap1302->regmap32)) {
+		dev_err(ap1302->dev, "regmap32 init failed: %ld\n",
+			PTR_ERR(ap1302->regmap32));
 		return -ENODEV;
 	}
 
-	ret = ap1302_parse_of(ap1302_dev);
+	ret = ap1302_parse_of(ap1302);
 	if (ret < 0)
 		return ret;
 
-	ret = ap1302_config_hw(ap1302_dev);
+	ret = ap1302_config_hw(ap1302);
 	if (ret)
 		return ret;
 
-	ret = ap1302_config_v4l2(ap1302_dev);
+	ret = ap1302_config_v4l2(ap1302);
 	if (ret)
 		return ret;
 
-	dev_info(ap1302_dev->dev, "%s probe successfully done\n", DRIVER_NAME);
+	dev_info(ap1302->dev, "%s probe successfully done\n", DRIVER_NAME);
 	return 0;
 }
 
 static int ap1302_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ap1302_device *ap1302_dev = to_ap1302(sd);
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 
-	release_firmware(ap1302_dev->fw);
+	release_firmware(ap1302->fw);
 
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
