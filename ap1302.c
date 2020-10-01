@@ -29,8 +29,6 @@
 #include <media/media-entity.h>
 #include <media/v4l2-device.h>
 
-#include <dt-bindings/media/xilinx-vip.h>
-
 #include "ap1302.h"
 
 #define DRIVER_NAME "AP1302"
@@ -68,7 +66,6 @@ static struct regmap_config ap1302_reg32_config = {
 };
 
 struct ap1302_video_format {
-	unsigned int vf_code;
 	unsigned int width;
 	const char *pattern;
 	unsigned int code;
@@ -102,9 +99,9 @@ static const struct ap1302_resolution resolutions_ar1335_single[] = {
 };
 
 static const struct ap1302_video_format supported_video_formats[] = {
-	{ XVIP_VF_YUV_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
+	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
 	  2, 16, V4L2_PIX_FMT_YUYV, 1, 1, 2, 1, "4:2:2, packed, YUYV" },
-	{ XVIP_VF_VUY_422, 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
+	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
 	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1, "4:2:2, packed, UYVY" },
 };
 
