@@ -811,9 +811,10 @@ static void ap1302_ctrls_cleanup(struct ap1302_device *ap1302)
  * V4L2 Subdev Operations
  */
 
-static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *ap1302,
-						struct v4l2_subdev_pad_config *cfg,
-						unsigned int pad, u32 which)
+static struct v4l2_mbus_framefmt *
+ap1302_get_pad_format(struct ap1302_device *ap1302,
+		      struct v4l2_subdev_pad_config *cfg,
+		      unsigned int pad, u32 which)
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
@@ -823,6 +824,40 @@ static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *a
 	default:
 		return NULL;
 	}
+}
+
+static int ap1302_init_cfg(struct v4l2_subdev *sd,
+			   struct v4l2_subdev_pad_config *cfg)
+{
+	u32 which = cfg ? V4L2_SUBDEV_FORMAT_TRY : V4L2_SUBDEV_FORMAT_ACTIVE;
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	const struct ap1302_size *sensor_resolution =
+		&ap1302->sensors[0].info->resolution;
+	struct v4l2_mbus_framefmt *format;
+	int i;
+
+	format = ap1302_get_pad_format(ap1302, cfg, 0, which);
+
+	/* Default to the largest size compatible with the sensor resolution. */
+	for (i = ARRAY_SIZE(ap1302_sizes) - 1; i >= 0; --i) {
+		const struct ap1302_size *size = &ap1302_sizes[i];
+
+		if (size->width <= sensor_resolution->width &&
+		    size->height <= sensor_resolution->height) {
+			format->width = size->width;
+			format->height = size->height;
+			break;
+		}
+	}
+
+	if (i < 0)
+		return -EINVAL;
+
+	format->field = V4L2_FIELD_NONE;
+	format->code = ap1302->formats[0].info->code;
+	format->colorspace = V4L2_COLORSPACE_SRGB;
+
+	return 0;
 }
 
 static int ap1302_enum_mbus_code(struct v4l2_subdev *sd,
@@ -1004,6 +1039,7 @@ static const struct media_entity_operations ap1302_media_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops ap1302_pad_ops = {
+	.init_cfg = ap1302_init_cfg,
 	.enum_mbus_code = ap1302_enum_mbus_code,
 	.enum_frame_size = ap1302_enum_frame_size,
 	.get_fmt = ap1302_get_fmt,
@@ -1267,7 +1303,6 @@ static void ap1302_hw_cleanup(struct ap1302_device *ap1302)
 
 static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 {
-	struct v4l2_mbus_framefmt *format;
 	struct v4l2_subdev *sd;
 	int ret;
 
@@ -1294,12 +1329,9 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 
 	ap1302->formats[0].info = &supported_video_formats[0];
 
-	format = &ap1302->formats[0].format;
-	format->width = ap1302->sensors[0].info->resolution.width;
-	format->height = ap1302->sensors[0].info->resolution.height;
-	format->field = V4L2_FIELD_NONE;
-	format->code = ap1302->formats[0].info->code;
-	format->colorspace = V4L2_COLORSPACE_SRGB;
+	ret = ap1302_init_cfg(sd, NULL);
+	if (ret < 0)
+		goto error_media;
 
 	ret = ap1302_ctrls_init(ap1302);
 	if (ret < 0)
