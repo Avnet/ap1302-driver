@@ -337,6 +337,47 @@ static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *a
 	}
 }
 
+static int ap1302_enum_mbus_code(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_mbus_code_enum *code)
+{
+	if (code->index >= ARRAY_SIZE(supported_video_formats))
+		return -EINVAL;
+
+	code->code = supported_video_formats[code->index].code;
+	return 0;
+}
+
+static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
+				  struct v4l2_subdev_pad_config *cfg,
+				  struct v4l2_subdev_frame_size_enum *fse)
+{
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	const struct ap1302_resolution *resolutions =
+		ap1302->sensors[0].info->resolutions;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
+		if (supported_video_formats[i].code == fse->code)
+			break;
+	}
+
+	if (i >= ARRAY_SIZE(supported_video_formats))
+		return-EINVAL;
+
+	for (i = 0; i <= fse->index; ++resolutions, ++i) {
+		if (!resolutions->width)
+			return -EINVAL;
+	}
+
+	fse->min_width = resolutions->width;
+	fse->min_height = resolutions->height;
+	fse->max_width = resolutions->width;
+	fse->max_height = resolutions->height;
+
+	return 0;
+}
+
 static int ap1302_get_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
@@ -423,6 +464,8 @@ static const struct media_entity_operations ap1302_media_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops ap1302_pad_ops = {
+	.enum_mbus_code = ap1302_enum_mbus_code,
+	.enum_frame_size = ap1302_enum_frame_size,
 	.get_fmt = ap1302_get_fmt,
 	.set_fmt = ap1302_set_fmt,
 };
