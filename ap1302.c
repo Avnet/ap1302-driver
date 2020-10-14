@@ -38,11 +38,123 @@
 #define AP1302_CHIP_ID				0x0265
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
 
+/* Control Registers */
+#define AP1302_BUBBLE_OUT_FMT			AP1302_REG_16BIT(0x1164)
+#define AP1302_BUBBLE_OUT_FMT_FT_YUV		(3U << 4)
+#define AP1302_BUBBLE_OUT_FMT_FT_RGB		(4U << 4)
+#define AP1302_BUBBLE_OUT_FMT_FT_YUV_JFIF	(5U << 4)
+#define AP1302_BUBBLE_OUT_FMT_FST_RGB_888	(0U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_RGB_565	(1U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_RGB_555M	(2U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_RGB_555L	(3U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_YUV_422	(0U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_YUV_420	(1U << 0)
+#define AP1302_BUBBLE_OUT_FMT_FST_YUV_400	(2U << 0)
+#define AP1302_ATOMIC				AP1302_REG_16BIT(0x1184)
+#define AP1302_ATOMIC_MODE			BIT(2)
+#define AP1302_ATOMIC_FINISH			BIT(1)
+#define AP1302_ATOMIC_RECORD			BIT(0)
+
+/*
+ * Context Registers (Preview, Snapshot, Video). The addresses correspond to
+ * the preview context.
+ */
+#define AP1302_CTX_OFFSET			0x1000
+
+#define AP1302_CTX_WIDTH			AP1302_REG_16BIT(0x2000)
+#define AP1302_CTX_HEIGHT			AP1302_REG_16BIT(0x2002)
+#define AP1302_CTX_ROI_X0			AP1302_REG_16BIT(0x2004)
+#define AP1302_CTX_ROI_Y0			AP1302_REG_16BIT(0x2006)
+#define AP1302_CTX_ROI_X1			AP1302_REG_16BIT(0x2008)
+#define AP1302_CTX_ROI_Y1			AP1302_REG_16BIT(0x200a)
+#define AP1302_CTX_OUT_FMT			AP1302_REG_16BIT(0x2012)
+#define AP1302_CTX_OUT_FMT_IPIPE_BYPASS		BIT(13)
+#define AP1302_CTX_OUT_FMT_SS			BIT(12)
+#define AP1302_CTX_OUT_FMT_FAKE_EN		BIT(11)
+#define AP1302_CTX_OUT_FMT_ST_EN		BIT(10)
+#define AP1302_CTX_OUT_FMT_IIS_NONE		(0U << 8)
+#define AP1302_CTX_OUT_FMT_IIS_POST_VIEW	(1U << 8)
+#define AP1302_CTX_OUT_FMT_IIS_VIDEO		(2U << 8)
+#define AP1302_CTX_OUT_FMT_IIS_BUBBLE		(3U << 8)
+#define AP1302_CTX_OUT_FMT_FT_JPEG_422		(0U << 4)
+#define AP1302_CTX_OUT_FMT_FT_JPEG_420		(1U << 4)
+#define AP1302_CTX_OUT_FMT_FT_YUV		(3U << 4)
+#define AP1302_CTX_OUT_FMT_FT_RGB		(4U << 4)
+#define AP1302_CTX_OUT_FMT_FT_YUV_JFIF		(5U << 4)
+#define AP1302_CTX_OUT_FMT_FT_RAW8		(8U << 4)
+#define AP1302_CTX_OUT_FMT_FT_RAW10		(9U << 4)
+#define AP1302_CTX_OUT_FMT_FT_RAW12		(10U << 4)
+#define AP1302_CTX_OUT_FMT_FT_RAW16		(11U << 4)
+#define AP1302_CTX_OUT_FMT_FT_DNG8		(12U << 4)
+#define AP1302_CTX_OUT_FMT_FT_DNG10		(13U << 4)
+#define AP1302_CTX_OUT_FMT_FT_DNG12		(14U << 4)
+#define AP1302_CTX_OUT_FMT_FT_DNG16		(15U << 4)
+#define AP1302_CTX_OUT_FMT_FST_JPEG_ROTATE	BIT(2)
+#define AP1302_CTX_OUT_FMT_FST_JPEG_SCAN	(0U << 0)
+#define AP1302_CTX_OUT_FMT_FST_JPEG_JFIF	(1U << 0)
+#define AP1302_CTX_OUT_FMT_FST_JPEG_EXIF	(2U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RGB_888		(0U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RGB_565		(1U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RGB_555M		(2U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RGB_555L		(3U << 0)
+#define AP1302_CTX_OUT_FMT_FST_YUV_422		(0U << 0)
+#define AP1302_CTX_OUT_FMT_FST_YUV_420		(1U << 0)
+#define AP1302_CTX_OUT_FMT_FST_YUV_400		(2U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_SENSOR	(0U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_CAPTURE	(1U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_CP		(2U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_BPC		(3U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_IHDR		(4U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_PP		(5U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_DENSH	(6U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_PM		(7U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_GC		(8U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_CURVE	(9U << 0)
+#define AP1302_CTX_OUT_FMT_FST_RAW_CCONV	(10U << 0)
+#define AP1302_CTX_S1_SENSOR_MODE		AP1302_REG_16BIT(0x202e)
+#define AP1302_CTX_HINF_CTRL			AP1302_REG_16BIT(0x2030)
+#define AP1302_CTX_HINF_CTRL_BT656_LE		BIT(15)
+#define AP1302_CTX_HINF_CTRL_BT656_16BIT	BIT(14)
+#define AP1302_CTX_HINF_CTRL_MUX_DELAY(n)	((n) << 8)
+#define AP1302_CTX_HINF_CTRL_LV_POL		BIT(7)
+#define AP1302_CTX_HINF_CTRL_FV_POL		BIT(6)
+#define AP1302_CTX_HINF_CTRL_MIPI_CONT_CLK	BIT(5)
+#define AP1302_CTX_HINF_CTRL_SPOOF		BIT(4)
+#define AP1302_CTX_HINF_CTRL_MIPI_MODE		BIT(3)
+#define AP1302_CTX_HINF_CTRL_MIPI_LANES(n)	((n) << 0)
+
 /* System Registers */
 #define AP1302_BOOTDATA_STAGE			AP1302_REG_16BIT(0x6002)
+#define AP1302_SENSOR_SELECT			AP1302_REG_16BIT(0x600c)
+#define AP1302_SENSOR_SELECT_TP_MODE(n)		((n) << 8)
+#define AP1302_SENSOR_SELECT_PATTERN_ON		BIT(7)
+#define AP1302_SENSOR_SELECT_MODE_3D_ON		BIT(6)
+#define AP1302_SENSOR_SELECT_CLOCK		BIT(5)
+#define AP1302_SENSOR_SELECT_SINF_MIPI		BIT(4)
+#define AP1302_SENSOR_SELECT_YUV		BIT(2)
+#define AP1302_SENSOR_SELECT_SENSOR_TP		(0U << 0)
+#define AP1302_SENSOR_SELECT_SENSOR(n)		(((n) + 1) << 0)
+#define AP1302_SYS_START			AP1302_REG_16BIT(0x601a)
+#define AP1302_SYS_START_PLL_LOCK		BIT(15)
+#define AP1302_SYS_START_LOAD_OTP		BIT(12)
+#define AP1302_SYS_START_RESTART_ERROR		BIT(11)
+#define AP1302_SYS_START_STALL_STATUS		BIT(9)
+#define AP1302_SYS_START_STALL_EN		BIT(8)
+#define AP1302_SYS_START_STALL_MODE_FRAME	(0U << 6)
+#define AP1302_SYS_START_STALL_MODE_DISABLED	(1U << 6)
+#define AP1302_SYS_START_STALL_MODE_POWER_DOWN	(2U << 6)
+#define AP1302_SYS_START_GO			BIT(4)
+#define AP1302_SYS_START_PATCH_FUN		BIT(1)
+#define AP1302_SYS_START_PLL_INIT		BIT(0)
 
 /* Misc Registers */
 #define AP1302_SIP_CRC				AP1302_REG_16BIT(0xf052)
+
+enum ap1302_context {
+	AP1302_CTX_PREVIEW = 0,
+	AP1302_CTX_SNAPSHOT = 1,
+	AP1302_CTX_VIDEO = 2,
+};
 
 struct ap1302_format_info {
 	unsigned int code;
@@ -104,7 +216,11 @@ struct ap1302_firmware_header {
 #define MAX_FW_LOAD_RETRIES 3
 
 static const struct ap1302_format_info supported_video_formats[] = {
-	{ MEDIA_BUS_FMT_UYVY8_1X16 },
+	{
+		.code = MEDIA_BUS_FMT_UYVY8_1X16,
+		.out_fmt = AP1302_CTX_OUT_FMT_FT_YUV_JFIF
+			 | AP1302_CTX_OUT_FMT_FST_YUV_422,
+	},
 };
 
 /* -----------------------------------------------------------------------------
@@ -227,6 +343,23 @@ static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
 	return 0;
 }
 
+static int ap1302_write_ctx(struct ap1302_device *ap1302,
+			    enum ap1302_context ctx, u32 reg, u32 val)
+{
+	/*
+	 * The snapshot context is missing the S1_SENSOR_MODE register,
+	 * shifting all the addresses for the registers that come after it.
+	 */
+	if (ctx == AP1302_CTX_SNAPSHOT) {
+		if (AP1302_REG_ADDR(reg) >= AP1302_CTX_S1_SENSOR_MODE)
+			reg -= 2;
+	}
+
+	reg += ctx * AP1302_CTX_OFFSET;
+
+	return ap1302_write(ap1302, reg, val);
+}
+
 /* -----------------------------------------------------------------------------
  * Power Handling
  */
@@ -331,6 +464,56 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 		usleep_range(200, 1000);
 		gpiod_set_value(ap1302->standby_gpio, 0);
 	}
+}
+
+/* -----------------------------------------------------------------------------
+ * Hardware Configuration
+ */
+
+static int ap1302_configure(struct ap1302_device *ap1302)
+{
+	int ret;
+
+	ret = ap1302_write(ap1302, AP1302_ATOMIC, AP1302_ATOMIC_RECORD);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_WIDTH,
+			       ap1302->formats[0].format.width);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_HEIGHT,
+			       ap1302->formats[0].format.height);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_OUT_FMT,
+			       ap1302->formats[0].info->out_fmt);
+	if (ret < 0)
+		return ret;
+
+	/*
+	ret = ap1302_write(ap1302, AP1302_BUBBLE_OUT_FMT,
+			   AP1302_BUBBLE_OUT_FMT_FT_YUV_JFIF |
+			   AP1302_BUBBLE_OUT_FMT_FST_YUV_420);
+	if (ret < 0)
+		return ret;
+	*/
+
+	ap1302_write(ap1302, AP1302_ATOMIC,
+		     0x0008 | AP1302_ATOMIC_FINISH | AP1302_ATOMIC_RECORD);
+
+	/*
+	ret = ap1302_write(ap1302, AP1302_CTX_HINF_CTRL,
+			   AP1302_CTX_HINF_CTRL_MIPI_CONT_CLK |
+			   AP1302_CTX_HINF_CTRL_SPOOF |
+			   AP1302_CTX_HINF_CTRL_MIPI_MODE);
+	if (ret < 0)
+		return ret;
+	*/
+
+	return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -471,6 +654,39 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
+{
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	u32 reg;
+	int ret;
+
+	mutex_lock(&ap1302->lock);
+
+	if (enable) {
+		ret = ap1302_configure(ap1302);
+		if (ret < 0)
+			goto done;
+
+		reg = AP1302_SYS_START_PLL_LOCK
+		    | AP1302_SYS_START_GO;
+	} else {
+		reg = AP1302_SYS_START_PLL_LOCK
+		    | AP1302_SYS_START_STALL_EN
+		    | AP1302_SYS_START_STALL_MODE_DISABLED;
+	}
+
+	ret = ap1302_write(ap1302, AP1302_SYS_START, reg);
+
+done:
+	mutex_unlock(&ap1302->lock);
+
+	if (ret < 0)
+		dev_err(ap1302->dev, "Failed to %s stream: %d\n",
+			enable ? "start" : "stop", ret);
+
+	return ret;
+}
+
 static const struct media_entity_operations ap1302_media_ops = {
 	.link_validate = v4l2_subdev_link_validate
 };
@@ -482,8 +698,13 @@ static const struct v4l2_subdev_pad_ops ap1302_pad_ops = {
 	.set_fmt = ap1302_set_fmt,
 };
 
+static const struct v4l2_subdev_video_ops ap1302_video_ops = {
+	.s_stream = ap1302_s_stream,
+};
+
 static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 	.pad = &ap1302_pad_ops,
+	.video = &ap1302_video_ops,
 };
 
 /* -----------------------------------------------------------------------------
