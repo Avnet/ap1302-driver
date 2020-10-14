@@ -37,7 +37,12 @@
 /* Info Registers */
 #define AP1302_CHIP_VERSION			AP1302_REG_16BIT(0x0000)
 #define AP1302_CHIP_ID				0x0265
+#define AP1302_ERROR				AP1302_REG_16BIT(0x0006)
+#define AP1302_ERR_FILE				AP1302_REG_32BIT(0x0008)
+#define AP1302_ERR_LINE				AP1302_REG_16BIT(0x000c)
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
+#define AP1302_CON_BUF(n)			AP1302_REG_16BIT(0x0a2c + (n))
+#define AP1302_CON_BUF_SIZE			512
 
 /* Control Registers */
 #define AP1302_DZ_TGT_FCT			AP1302_REG_16BIT(0x1010)
@@ -200,6 +205,7 @@
 
 /* System Registers */
 #define AP1302_BOOTDATA_STAGE			AP1302_REG_16BIT(0x6002)
+#define AP1302_WARNING(n)			AP1302_REG_16BIT(0x6004 + (n) * 2)
 #define AP1302_SENSOR_SELECT			AP1302_REG_16BIT(0x600c)
 #define AP1302_SENSOR_SELECT_TP_MODE(n)		((n) << 8)
 #define AP1302_SENSOR_SELECT_PATTERN_ON		BIT(7)
@@ -559,6 +565,36 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 /* -----------------------------------------------------------------------------
  * Hardware Configuration
  */
+
+static int ap1302_dump_console(struct ap1302_device *ap1302)
+{
+	u8 *buffer;
+	int ret;
+
+	buffer = kmalloc(AP1302_CON_BUF_SIZE + 1, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
+	ret = regmap_raw_read(ap1302->regmap16, AP1302_CON_BUF(0), buffer,
+			      AP1302_CON_BUF_SIZE);
+	if (ret < 0) {
+		dev_err(ap1302->dev, "Failed to read console buffer: %d\n",
+			ret);
+		goto done;
+	}
+
+	print_hex_dump(KERN_INFO, "console ", DUMP_PREFIX_OFFSET, 16, 1, buffer,
+		       AP1302_CON_BUF_SIZE, true);
+
+	buffer[AP1302_CON_BUF_SIZE] = '\0';
+	printk(KERN_INFO "%s\n", buffer);
+
+	ret = 0;
+
+done:
+	kfree(buffer);
+	return ret;
+}
 
 static int ap1302_configure(struct ap1302_device *ap1302)
 {
@@ -1034,6 +1070,102 @@ done:
 	return ret;
 }
 
+static const char * const ap1302_warnings[] = {
+	"HINF_BANDWIDTH",
+	"FLICKER_DETECTION",
+	"FACED_NE",
+	"SMILED_NE",
+	"HINF_OVERRUN",
+	NULL,
+	"FRAME_TOO_SMALL",
+	"MISSING_PHASES",
+	"SPOOF_UNDERRUN",
+	"JPEG_NOLAST",
+	"NO_IN_FREQ_SPEC",
+	"SINF0",
+	"SINF1",
+	"CAPTURE0",
+	"CAPTURE1",
+	"ISR_UNHANDLED",
+	"INTERLEAVE_SPOOF",
+	"INTERLEAVE_BUF",
+	"COORD_OUT_OF_RANGE",
+	"ICP_CLOCKING",
+	"SENSOR_CLOCKING",
+	"SENSOR_NO_IHDR",
+	"DIVIDE_BY_ZERO",
+	"INT0_UNDERRUN",
+	"INT1_UNDERRUN",
+	"SCRATCHPAD_TOO_BIG",
+	"OTP_RECORD_READ",
+	"NO_LSC_IN_OTP",
+	"GPIO_INT_LOST",
+	"NO_PDAF_DATA",
+	"FAR_PDAF_ACCESS_SKIP",
+	"PDAF_ERROR",
+	"ATM_TVI_BOUNDS",
+	"SIPM_0_RTY",
+	"SIPM_1_TRY",
+	"SIPM_0_NO_ACK",
+	"SIPM_1_NO_ACK",
+	"SMILE_DIS",
+	"DVS_DIS",
+	"TEST_DIS",
+	"SENSOR_LV2LV",
+	"SENSOR_FV2FV",
+	"FRAME_LOST",
+};
+
+static int ap1302_log_status(struct v4l2_subdev *sd)
+{
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	u32 error, err_file, err_line;
+	u32 warning[4];
+	unsigned int i;
+	int ret;
+
+	/* Dump the console buffer. */
+	ret = ap1302_dump_console(ap1302);
+	if (ret < 0)
+		return ret;
+
+	/* Print errors. */
+	ret = ap1302_read(ap1302, AP1302_ERROR, &error);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_read(ap1302, AP1302_ERR_FILE, &err_file);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_read(ap1302, AP1302_ERR_LINE, &err_line);
+	if (ret < 0)
+		return ret;
+
+	dev_info(ap1302->dev, "ERROR: 0x%04x (file 0x%08x:%u)\n", error,
+		 err_file, err_line);
+
+	/* Print warnings. */
+	for (i = 0; i < ARRAY_SIZE(warning); ++i) {
+		ret = ap1302_read(ap1302, AP1302_WARNING(i), &warning[i]);
+		if (ret < 0)
+			return ret;
+	}
+
+	dev_info(ap1302->dev,
+		 "WARNING [0] 0x%04x [1] 0x%04x [2] 0x%04x [3] 0x%04x\n",
+		 warning[0], warning[1], warning[2], warning[3]);
+
+	for (i = 0; i < ARRAY_SIZE(ap1302_warnings); ++i) {
+		if ((warning[i / 16] & BIT(i % 16)) &&
+		    ap1302_warnings[i])
+			dev_info(ap1302->dev, "- WARN_%s\n",
+				 ap1302_warnings[i]);
+	}
+
+	return 0;
+}
+
 static const struct media_entity_operations ap1302_media_ops = {
 	.link_validate = v4l2_subdev_link_validate
 };
@@ -1050,9 +1182,14 @@ static const struct v4l2_subdev_video_ops ap1302_video_ops = {
 	.s_stream = ap1302_s_stream,
 };
 
+static const struct v4l2_subdev_core_ops ap1302_core_ops = {
+	.log_status = ap1302_log_status,
+};
+
 static const struct v4l2_subdev_ops ap1302_subdev_ops = {
-	.pad = &ap1302_pad_ops,
+	.core = &ap1302_core_ops,
 	.video = &ap1302_video_ops,
+	.pad = &ap1302_pad_ops,
 };
 
 /* -----------------------------------------------------------------------------
