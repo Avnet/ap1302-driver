@@ -37,6 +37,7 @@
 /* Info Registers */
 #define AP1302_CHIP_VERSION			AP1302_REG_16BIT(0x0000)
 #define AP1302_CHIP_ID				0x0265
+#define AP1302_FRAME_CNT			AP1302_REG_16BIT(0x0002)
 #define AP1302_ERROR				AP1302_REG_16BIT(0x0006)
 #define AP1302_ERR_FILE				AP1302_REG_32BIT(0x0008)
 #define AP1302_ERR_LINE				AP1302_REG_16BIT(0x000c)
@@ -1122,6 +1123,7 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 	u32 error, err_file, err_line;
 	u32 warning[4];
 	unsigned int i;
+	u32 value;
 	int ret;
 
 	/* Dump the console buffer. */
@@ -1162,6 +1164,14 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 			dev_info(ap1302->dev, "- WARN_%s\n",
 				 ap1302_warnings[i]);
 	}
+
+	/* Print the frame counter. */
+	ret = ap1302_read(ap1302, AP1302_FRAME_CNT, &value);
+	if (ret < 0)
+		return ret;
+
+	dev_info(ap1302->dev, "Frame counters: HINF %u, BRAC %u\n",
+		 value >> 8, value & 0xff);
 
 	return 0;
 }
