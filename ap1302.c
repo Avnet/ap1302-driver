@@ -24,16 +24,24 @@
 
 #define DRIVER_NAME "ap1302"
 
-#define AP1302_CHIP_ID			0x265
-#define AP1302_REG16			2
-#define AP1302_REG32			4
-#define AP1302_FW_WINDOW_SIZE		0x2000
-#define AP1302_FW_WINDOW_OFFSET		0x8000
+#define AP1302_FW_WINDOW_SIZE			0x2000
+#define AP1302_FW_WINDOW_OFFSET			0x8000
 
-#define REG_CHIP_VERSION		0x0000
-#define REG_CHIP_REV			0x0050
-#define REG_SIP_CRC			0xf052
-#define REG_BOOTDATA_STAGE		0x6002
+#define AP1302_REG_16BIT(n)			((2 << 16) | (n))
+#define AP1302_REG_32BIT(n)			((4 << 16) | (n))
+#define AP1302_REG_SIZE(n)			((n) >> 16)
+#define AP1302_REG_ADDR(n)			((n) & 0xffff)
+
+/* Info Registers */
+#define AP1302_CHIP_VERSION			AP1302_REG_16BIT(0x0000)
+#define AP1302_CHIP_ID				0x0265
+#define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
+
+/* System Registers */
+#define AP1302_BOOTDATA_STAGE			AP1302_REG_16BIT(0x6002)
+
+/* Misc Registers */
+#define AP1302_SIP_CRC				AP1302_REG_16BIT(0xf052)
 
 struct ap1302_resolution {
 	unsigned int width;
@@ -155,49 +163,59 @@ static const struct regmap_config ap1302_reg32_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int ap1302_read(struct ap1302_device *ap1302, u16 reg, u16 len,
-		       unsigned int *val)
+static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 {
+	unsigned int size = AP1302_REG_SIZE(reg);
+	u16 addr = AP1302_REG_ADDR(reg);
 	int ret;
 
-	if (len == AP1302_REG16)
-		ret = regmap_read(ap1302->regmap16, reg, val);
-	else if (len == AP1302_REG32)
-		ret = regmap_read(ap1302->regmap32, reg, val);
-	else
-		ret = -EINVAL;
+	switch (size) {
+	case 2:
+		ret = regmap_read(ap1302->regmap16, addr, val);
+		break;
+	case 4:
+		ret = regmap_read(ap1302->regmap32, addr, val);
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	if (ret) {
-		dev_err(ap1302->dev, "Register 0x%04x read failed: %d\n",
-			reg, ret);
+		dev_err(ap1302->dev, "%s: register 0x%04x %s failed: %d\n",
+			__func__, addr, "read", ret);
 		return ret;
 	}
 
-	if (len == AP1302_REG16)
-		dev_dbg(ap1302->dev, "read_reg[0x%04X] = 0x%04X\n", reg, *(u16 *)val);
-	else
-		dev_dbg(ap1302->dev, "read_reg[0x%04X] = 0x%08X\n", reg, *(u32 *)val);
+	dev_dbg(ap1302->dev, "%s: R0x%04x = 0x%0*x\n", __func__,
+		addr, size * 2, *val);
 
-	return ret;
+	return 0;
 }
 
-static int ap1302_write(struct ap1302_device *ap1302, u16 reg, u16 len, u32 val)
+static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
 {
+	unsigned int size = AP1302_REG_SIZE(reg);
+	u16 addr = AP1302_REG_ADDR(reg);
 	int ret;
-	if (len == AP1302_REG16)
-		ret = regmap_write(ap1302->regmap16, reg, val);
-	else if (len == AP1302_REG32)
-		ret = regmap_write(ap1302->regmap32, reg, val);
-	else
-		ret = -EINVAL;
+
+	switch (size) {
+	case 2:
+		ret = regmap_write(ap1302->regmap16, addr, val);
+		break;
+	case 4:
+		ret = regmap_write(ap1302->regmap32, addr, val);
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	if (ret) {
-		dev_err(ap1302->dev, "Register 0x%04x write failed: %d\n",
-			reg, ret);
+		dev_err(ap1302->dev, "%s: register 0x%04x %s failed: %d\n",
+			__func__, addr, "write", ret);
 		return ret;
 	}
 
-	return ret;
+	return 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -560,7 +578,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
 	/* Clear the CRC register. */
-	ret = ap1302_write(ap1302, REG_SIP_CRC, AP1302_REG16, 0xffff);
+	ret = ap1302_write(ap1302, AP1302_SIP_CRC, 0xffff);
 	if (ret)
 		return ret;
 
@@ -573,7 +591,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	if (ret)
 		return ret;
 
-	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0x0002);
+	ret = ap1302_write(ap1302, AP1302_BOOTDATA_STAGE, 0x0002);
 	if (ret)
 		return ret;
 
@@ -587,7 +605,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 
 	msleep(40);
 
-	ret = ap1302_read(ap1302, REG_SIP_CRC, AP1302_REG16, &crc);
+	ret = ap1302_read(ap1302, AP1302_SIP_CRC, &crc);
 	if (ret)
 		return ret;
 
@@ -602,7 +620,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	 * Write 0xffff to the bootdata_stage register to indicate to the
 	 * AP1302 that the whole bootdata content has been loaded.
 	 */
-	ret = ap1302_write(ap1302, REG_BOOTDATA_STAGE, AP1302_REG16, 0xffff);
+	ret = ap1302_write(ap1302, AP1302_BOOTDATA_STAGE, 0xffff);
 	if (ret)
 		return ret;
 
@@ -615,11 +633,11 @@ static int ap1302_detect_chip(struct ap1302_device *ap1302)
 	unsigned int revision;
 	int ret;
 
-	ret = ap1302_read(ap1302, REG_CHIP_VERSION, AP1302_REG16, &version);
+	ret = ap1302_read(ap1302, AP1302_CHIP_VERSION, &version);
 	if (ret)
 		return ret;
 
-	ret = ap1302_read(ap1302, REG_CHIP_REV, AP1302_REG16, &revision);
+	ret = ap1302_read(ap1302, AP1302_CHIP_REV, &revision);
 	if (ret)
 		return ret;
 
