@@ -63,17 +63,19 @@ struct ap1302_sensor {
 
 struct ap1302_device {
 	struct device *dev;
-	struct v4l2_subdev sd;
-	const struct firmware *fw;
-	struct media_pad pad;
 	struct i2c_client *client;
-	struct v4l2_mbus_framefmt formats[1];
-	struct regmap *regmap16;
-	struct regmap *regmap32;
 
 	struct gpio_desc *reset_gpio;
 	struct gpio_desc *standby_gpio;
 	struct clk *clock;
+	struct regmap *regmap16;
+	struct regmap *regmap32;
+
+	const struct firmware *fw;
+
+	struct v4l2_subdev sd;
+	struct media_pad pad;
+	struct v4l2_mbus_framefmt formats[1];
 
 	struct ap1302_sensor sensors[2];
 };
