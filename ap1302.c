@@ -43,6 +43,11 @@
 /* Misc Registers */
 #define AP1302_SIP_CRC				AP1302_REG_16BIT(0xf052)
 
+struct ap1302_format_info {
+	unsigned int code;
+	u16 out_fmt;
+};
+
 struct ap1302_resolution {
 	unsigned int width;
 	unsigned int height;
@@ -75,7 +80,10 @@ struct ap1302_device {
 
 	struct v4l2_subdev sd;
 	struct media_pad pad;
-	struct v4l2_mbus_framefmt formats[1];
+	struct {
+		struct v4l2_mbus_framefmt format;
+		const struct ap1302_format_info *info;
+	} formats[1];
 
 	struct ap1302_sensor sensors[2];
 };
@@ -92,11 +100,7 @@ struct ap1302_firmware_header {
 
 #define MAX_FW_LOAD_RETRIES 3
 
-struct ap1302_video_format {
-	unsigned int code;
-};
-
-static const struct ap1302_video_format supported_video_formats[] = {
+static const struct ap1302_format_info supported_video_formats[] = {
 	{ MEDIA_BUS_FMT_UYVY8_1X16 },
 };
 
@@ -338,7 +342,7 @@ static struct v4l2_mbus_framefmt * ap1302_get_pad_format(struct ap1302_device *a
 	case V4L2_SUBDEV_FORMAT_TRY:
 		return v4l2_subdev_get_try_format(&ap1302->sd, cfg, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
-		return &ap1302->formats[pad];
+		return &ap1302->formats[pad].format;
 	default:
 		return NULL;
 	}
@@ -390,9 +394,8 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
-	int pad = fmt->pad;
 
-	fmt->format = *ap1302_get_pad_format(ap1302, cfg, pad, fmt->which);
+	fmt->format = *ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
 	return 0;
 }
 
@@ -418,50 +421,39 @@ static void ap1302_res_roundup(struct ap1302_device *ap1302, u32 *width,
 	*height = resolutions[0].height;
 }
 
-static int ap1302_try_mbus_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *fmt)
-{
-	int i;
-	struct ap1302_device *ap1302 = to_ap1302(sd);
-
-	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
-		if (supported_video_formats[i].code == fmt->code)
-			break;
-	}
-
-	if (i >= ARRAY_SIZE(supported_video_formats)) {
-		/* default to first format in case no match */
-		i = 0;
-		fmt->code = supported_video_formats[0].code;
-	}
-
-	/* Find suitable supported resolution */
-	ap1302_res_roundup(ap1302, &fmt->width, &fmt->height);
-
-	fmt->field = V4L2_FIELD_NONE;
-	fmt->colorspace = V4L2_COLORSPACE_SRGB;
-
-	return 0;
-}
-
 static int ap1302_set_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
+	const struct ap1302_format_info *info = NULL;
+	struct v4l2_mbus_framefmt *format;
+	unsigned int i;
 
-	struct v4l2_mbus_framefmt *fmt_ptr;
-	struct v4l2_mbus_framefmt resp_fmt;
+	format = ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
 
-	fmt_ptr = ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
-	resp_fmt = fmt->format;
+	/* Validate the media bus code, default to the first supported value. */
+	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
+		if (supported_video_formats[i].code == fmt->format.code) {
+			info = &supported_video_formats[i];
+			break;
+		}
+	}
 
-	dev_dbg(ap1302->dev, "Configure source pad %d\n", fmt->pad);
-	ap1302_try_mbus_fmt(sd, &resp_fmt);
+	if (!info)
+		info = &supported_video_formats[0];
 
-	dev_dbg(ap1302->dev, "width %d height %d\n", resp_fmt.width, resp_fmt.height);
+	/* Find suitable supported resolution. */
+	ap1302_res_roundup(ap1302, &fmt->format.width, &fmt->format.height);
 
-	*fmt_ptr = resp_fmt;
-	fmt->format = resp_fmt;
+	format->width = fmt->format.width;
+	format->height = fmt->format.height;
+	format->code = info->code;
+
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		ap1302->formats[fmt->pad].info = info;
+
+	fmt->format = *format;
 
 	return 0;
 }
@@ -729,6 +721,7 @@ static void ap1302_hw_cleanup(struct ap1302_device *ap1302)
 
 static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 {
+	struct v4l2_mbus_framefmt *format;
 	struct v4l2_subdev *sd;
 	int ret;
 
@@ -753,11 +746,14 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 		return ret;
 	}
 
-	ap1302->formats[0].width = ap1302->sensors[0].info->resolutions[0].width;
-	ap1302->formats[0].height = ap1302->sensors[0].info->resolutions[0].height;
-	ap1302->formats[0].field = V4L2_FIELD_NONE;
-	ap1302->formats[0].code = MEDIA_BUS_FMT_UYVY8_1X16;
-	ap1302->formats[0].colorspace = V4L2_COLORSPACE_SRGB;
+	ap1302->formats[0].info = &supported_video_formats[0];
+
+	format = &ap1302->formats[0].format;
+	format->width = ap1302->sensors[0].info->resolutions[0].width;
+	format->height = ap1302->sensors[0].info->resolutions[0].height;
+	format->field = V4L2_FIELD_NONE;
+	format->code = ap1302->formats[0].info->code;
+	format->colorspace = V4L2_COLORSPACE_SRGB;
 
 	ret = v4l2_async_register_subdev(sd);
 	if (ret < 0) {
