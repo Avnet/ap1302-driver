@@ -161,7 +161,7 @@ struct ap1302_format_info {
 	u16 out_fmt;
 };
 
-struct ap1302_resolution {
+struct ap1302_size {
 	unsigned int width;
 	unsigned int height;
 };
@@ -169,7 +169,7 @@ struct ap1302_resolution {
 struct ap1302_sensor_info {
 	const char *compatible;
 	const char *name;
-	const struct ap1302_resolution *resolutions;
+	struct ap1302_size resolution;
 	const char * const *supplies;
 };
 
@@ -227,6 +227,26 @@ static const struct ap1302_format_info supported_video_formats[] = {
 	},
 };
 
+static const struct ap1302_size ap1302_sizes[] = {
+	/* Keep the sizes sorted in increasing order. */
+	{
+		.width = 640,
+		.height = 480,
+	}, {
+		.width = 720,
+		.height = 480,
+	}, {
+		.width = 1280,
+		.height = 720,
+	}, {
+		.width = 1920,
+		.height = 1080,
+	}, {
+		.width = 3840,
+		.height = 2160,
+	}
+};
+
 /* -----------------------------------------------------------------------------
  * Sensor Info
  */
@@ -235,17 +255,11 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	{
 		.compatible = "onnn,ar0144",
 		.name = "ar0114",
-		.resolutions = (const struct ap1302_resolution[]) {
-			{ 2560, 800 },
-			{ },
-		},
+		.resolution = { 2560, 800 },
 	}, {
 		.compatible = "onnn,ar0330",
 		.name = "ar0330",
-		.resolutions = (const struct ap1302_resolution[]) {
-			{ 2304, 1536 },
-			{ },
-		},
+		.resolution = { 2304, 1536 },
 		.supplies = (const char * const[]) {
 			"vddpll",
 			"vaa",
@@ -255,19 +269,14 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	}, {
 		.compatible = "onnn,ar1335",
 		.name = "ar1335",
-		.resolutions = (const struct ap1302_resolution[]) {
-			{ 1920, 1080 },
-			{ },
-		},
+		.resolution = { 1920, 1080 },
 	},
 };
 
 static const struct ap1302_sensor_info ap1302_sensor_info_none = {
 	.compatible = "",
 	.name = "none",
-	.resolutions = (const struct ap1302_resolution[]) {
-		{ },
-	},
+	.resolution = { 0, 0 },
 };
 
 /* -----------------------------------------------------------------------------
@@ -554,10 +563,22 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
-	const struct ap1302_resolution *resolutions =
-		ap1302->sensors[0].info->resolutions;
+	const struct ap1302_size *size;
 	unsigned int i;
 
+	/*
+	 * Enumerate the preset resolutions that don't exceed the sensor
+	 * resolution.
+	 */
+	if (fse->index >= ARRAY_SIZE(ap1302_sizes))
+		return -EINVAL;
+
+	size = &ap1302_sizes[fse->index];
+	if (size->width > ap1302->sensors[0].info->resolution.width ||
+	    size->height > ap1302->sensors[0].info->resolution.height)
+		return -EINVAL;
+
+	/* Validate the media bus code. */
 	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
 		if (supported_video_formats[i].code == fse->code)
 			break;
@@ -566,15 +587,10 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 	if (i >= ARRAY_SIZE(supported_video_formats))
 		return-EINVAL;
 
-	for (i = 0; i <= fse->index; ++resolutions, ++i) {
-		if (!resolutions->width)
-			return -EINVAL;
-	}
-
-	fse->min_width = resolutions->width;
-	fse->min_height = resolutions->height;
-	fse->max_width = resolutions->width;
-	fse->max_height = resolutions->height;
+	fse->min_width = size->width;
+	fse->min_height = size->height;
+	fse->max_width = size->width;
+	fse->max_height = size->height;
 
 	return 0;
 }
@@ -595,26 +611,40 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void ap1302_res_roundup(struct ap1302_device *ap1302, u32 *width,
-			       u32 *height)
+static void ap1302_find_best_size(struct ap1302_device *ap1302,
+				  u32 *width, u32 *height)
 {
-	const struct ap1302_resolution *resolutions =
-		ap1302->sensors[0].info->resolutions;
+	const struct ap1302_size *sensor_resolution =
+		&ap1302->sensors[0].info->resolution;
+	const struct ap1302_size *best_size;
+	unsigned int best_score = UINT_MAX;
 	unsigned int i;
 
-	/* TODO: Search for best match instead of rounding */
-	for (i = 0; resolutions[i].width ; i++) {
-		if (resolutions[i].width >= *width &&
-		    resolutions[i].height >= *height) {
-			*width = resolutions[i].width;
-			*height = resolutions[i].height;
-			return;
+	for (i = 0; i < ARRAY_SIZE(ap1302_sizes); ++i) {
+		const struct ap1302_size *size = &ap1302_sizes[i];
+		unsigned int score;
+
+		if (size->width > sensor_resolution->width ||
+		    size->height > sensor_resolution->height)
+			break;
+
+		/*
+		 * Use the surface of the non-overlapping areas as the score
+		 * function.
+		 */
+		score = sensor_resolution->width * sensor_resolution->height
+		      + size->width * size->height
+		      - 2 * abs(min(size->width, sensor_resolution->width) *
+				min(size->height, sensor_resolution->width));
+
+		if (score < best_score) {
+			best_score = score;
+			best_size = size;
 		}
 	}
 
-	/* Use default in case of no match */
-	*width = resolutions[0].width;
-	*height = resolutions[0].height;
+	*width = best_size->width;
+	*height = best_size->height;
 }
 
 static int ap1302_set_fmt(struct v4l2_subdev *sd,
@@ -639,8 +669,8 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	if (!info)
 		info = &supported_video_formats[0];
 
-	/* Find suitable supported resolution. */
-	ap1302_res_roundup(ap1302, &fmt->format.width, &fmt->format.height);
+	/* Find suitable supported size. */
+	ap1302_find_best_size(ap1302, &fmt->format.width, &fmt->format.height);
 
 	mutex_lock(&ap1302->lock);
 
@@ -987,8 +1017,8 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 	ap1302->formats[0].info = &supported_video_formats[0];
 
 	format = &ap1302->formats[0].format;
-	format->width = ap1302->sensors[0].info->resolutions[0].width;
-	format->height = ap1302->sensors[0].info->resolutions[0].height;
+	format->width = ap1302->sensors[0].info->resolution.width;
+	format->height = ap1302->sensors[0].info->resolution.height;
 	format->field = V4L2_FIELD_NONE;
 	format->code = ap1302->formats[0].info->code;
 	format->colorspace = V4L2_COLORSPACE_SRGB;
