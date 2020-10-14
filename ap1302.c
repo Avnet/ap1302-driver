@@ -83,24 +83,11 @@ struct ap1302_firmware_header {
 #define MAX_FW_LOAD_RETRIES 3
 
 struct ap1302_video_format {
-	unsigned int width;
-	const char *pattern;
 	unsigned int code;
-	unsigned int bpl_factor;
-	unsigned int bpp;
-	u32 fourcc;
-	u8 num_planes;
-	u8 buffers;
-	u8 hsub;
-	u8 vsub;
-	const char *description;
 };
 
 static const struct ap1302_video_format supported_video_formats[] = {
-	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  2, 16, V4L2_PIX_FMT_YUYV, 1, 1, 2, 1, "4:2:2, packed, YUYV" },
-	{ 8, NULL, MEDIA_BUS_FMT_UYVY8_1X16,
-	  2, 16, V4L2_PIX_FMT_UYVY, 1, 1, 2, 1, "4:2:2, packed, UYVY" },
+	{ MEDIA_BUS_FMT_UYVY8_1X16 },
 };
 
 /* -----------------------------------------------------------------------------
