@@ -13,11 +13,11 @@
 #include <linux/firmware.h>
 #include <linux/gpio.h>
 #include <linux/i2c.h>
-#include <linux/regmap.h>
-#include <linux/regulator/consumer.h>
 #include <linux/kernel.h>
 #include <linux/media.h>
 #include <linux/module.h>
+#include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 
 #include <media/media-entity.h>
 #include <media/v4l2-device.h>
