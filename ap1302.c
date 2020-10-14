@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/media.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 
@@ -77,6 +78,8 @@ struct ap1302_device {
 	struct regmap *regmap32;
 
 	const struct firmware *fw;
+
+	struct mutex lock;	/* Protects formats */
 
 	struct v4l2_subdev sd;
 	struct media_pad pad;
@@ -394,8 +397,14 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
+	const struct v4l2_mbus_framefmt *format;
 
-	fmt->format = *ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
+	format = ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
+
+	mutex_lock(&ap1302->lock);
+	fmt->format = *format;
+	mutex_unlock(&ap1302->lock);
+
 	return 0;
 }
 
@@ -446,12 +455,16 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	/* Find suitable supported resolution. */
 	ap1302_res_roundup(ap1302, &fmt->format.width, &fmt->format.height);
 
+	mutex_lock(&ap1302->lock);
+
 	format->width = fmt->format.width;
 	format->height = fmt->format.height;
 	format->code = info->code;
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		ap1302->formats[fmt->pad].info = info;
+
+	mutex_unlock(&ap1302->lock);
 
 	fmt->format = *format;
 
@@ -908,35 +921,43 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	ap1302->dev = &client->dev;
 	ap1302->client = client;
 
+	mutex_init(&ap1302->lock);
+
 	ap1302->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
 	if (IS_ERR(ap1302->regmap16)) {
 		dev_err(ap1302->dev, "regmap16 init failed: %ld\n",
 			PTR_ERR(ap1302->regmap16));
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 
 	ap1302->regmap32 = devm_regmap_init_i2c(client, &ap1302_reg32_config);
 	if (IS_ERR(ap1302->regmap32)) {
 		dev_err(ap1302->dev, "regmap32 init failed: %ld\n",
 			PTR_ERR(ap1302->regmap32));
-		return -ENODEV;
+		ret = -ENODEV;
+		goto error;
 	}
 
 	ret = ap1302_parse_of(ap1302);
 	if (ret < 0)
-		return ret;
+		goto error;
 
 	ret = ap1302_hw_init(ap1302);
 	if (ret)
-		return ret;
+		goto error;
 
 	ret = ap1302_config_v4l2(ap1302);
-	if (ret) {
-		ap1302_hw_cleanup(ap1302);
-		return ret;
-	}
+	if (ret)
+		goto error_hw_cleanup;
 
 	return 0;
+
+error_hw_cleanup:
+	ap1302_hw_cleanup(ap1302);
+error:
+	mutex_destroy(&ap1302->lock);
+	return ret;
 }
 
 static int ap1302_remove(struct i2c_client *client)
@@ -950,6 +971,8 @@ static int ap1302_remove(struct i2c_client *client)
 
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
+
+	mutex_destroy(&ap1302->lock);
 
 	return 0;
 }
