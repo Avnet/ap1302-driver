@@ -1211,6 +1211,8 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 		return -EINVAL;
 	}
 
+	dev_dbg(ap1302->dev, "Requesting firmware %s\n", name);
+
 	ret = request_firmware(&ap1302->fw, name, ap1302->dev);
 	if (ret) {
 		dev_err(ap1302->dev, "Failed to request firmware: %d\n", ret);
