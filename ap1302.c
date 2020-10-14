@@ -21,6 +21,7 @@
 #include <linux/regulator/consumer.h>
 
 #include <media/media-entity.h>
+#include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 
 #define DRIVER_NAME "ap1302"
@@ -39,6 +40,26 @@
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
 
 /* Control Registers */
+#define AP1302_DZ_TGT_FCT			AP1302_REG_16BIT(0x1010)
+#define AP1302_SFX_MODE				AP1302_REG_16BIT(0x1016)
+#define AP1302_SFX_MODE_SFX_NORMAL		(0U << 0)
+#define AP1302_SFX_MODE_SFX_ALIEN		(1U << 0)
+#define AP1302_SFX_MODE_SFX_ANTIQUE		(2U << 0)
+#define AP1302_SFX_MODE_SFX_BW			(3U << 0)
+#define AP1302_SFX_MODE_SFX_EMBOSS		(4U << 0)
+#define AP1302_SFX_MODE_SFX_EMBOSS_COLORED	(5U << 0)
+#define AP1302_SFX_MODE_SFX_GRAYSCALE		(6U << 0)
+#define AP1302_SFX_MODE_SFX_NEGATIVE		(7U << 0)
+#define AP1302_SFX_MODE_SFX_BLUISH		(8U << 0)
+#define AP1302_SFX_MODE_SFX_GREENISH		(9U << 0)
+#define AP1302_SFX_MODE_SFX_REDISH		(10U << 0)
+#define AP1302_SFX_MODE_SFX_POSTERIZE1		(11U << 0)
+#define AP1302_SFX_MODE_SFX_POSTERIZE2		(12U << 0)
+#define AP1302_SFX_MODE_SFX_SEPIA1		(13U << 0)
+#define AP1302_SFX_MODE_SFX_SEPIA2		(14U << 0)
+#define AP1302_SFX_MODE_SFX_SKETCH		(15U << 0)
+#define AP1302_SFX_MODE_SFX_SOLARIZE		(16U << 0)
+#define AP1302_SFX_MODE_SFX_FOGGY		(17U << 0)
 #define AP1302_BUBBLE_OUT_FMT			AP1302_REG_16BIT(0x1164)
 #define AP1302_BUBBLE_OUT_FMT_FT_YUV		(3U << 4)
 #define AP1302_BUBBLE_OUT_FMT_FT_RGB		(4U << 4)
@@ -123,6 +144,60 @@
 #define AP1302_CTX_HINF_CTRL_MIPI_MODE		BIT(3)
 #define AP1302_CTX_HINF_CTRL_MIPI_LANES(n)	((n) << 0)
 
+/* IQ Registers */
+#define AP1302_AE_BV_OFF			AP1302_REG_16BIT(0x5014)
+#define AP1302_AWB_CTRL				AP1302_REG_16BIT(0x5100)
+#define AP1302_AWB_CTRL_RECALC			BIT(13)
+#define AP1302_AWB_CTRL_POSTGAIN		BIT(12)
+#define AP1302_AWB_CTRL_UNGAIN			BIT(11)
+#define AP1302_AWB_CTRL_CLIP			BIT(10)
+#define AP1302_AWB_CTRL_SKY			BIT(9)
+#define AP1302_AWB_CTRL_FLASH			BIT(8)
+#define AP1302_AWB_CTRL_FACE_OFF		(0U << 6)
+#define AP1302_AWB_CTRL_FACE_IGNORE		(1U << 6)
+#define AP1302_AWB_CTRL_FACE_CONSTRAINED	(2U << 6)
+#define AP1302_AWB_CTRL_FACE_ONLY		(3U << 6)
+#define AP1302_AWB_CTRL_IMM			BIT(5)
+#define AP1302_AWB_CTRL_IMM1			BIT(4)
+#define AP1302_AWB_CTRL_MODE_OFF		(0U << 0)
+#define AP1302_AWB_CTRL_MODE_HORIZON		(1U << 0)
+#define AP1302_AWB_CTRL_MODE_A			(2U << 0)
+#define AP1302_AWB_CTRL_MODE_CWF		(3U << 0)
+#define AP1302_AWB_CTRL_MODE_D50		(4U << 0)
+#define AP1302_AWB_CTRL_MODE_D65		(5U << 0)
+#define AP1302_AWB_CTRL_MODE_D75		(6U << 0)
+#define AP1302_AWB_CTRL_MODE_MANUAL		(7U << 0)
+#define AP1302_AWB_CTRL_MODE_MEASURE		(8U << 0)
+#define AP1302_AWB_CTRL_MODE_AUTO		(15U << 0)
+#define AP1302_AWB_CTRL_MODE_MASK		0x000f
+#define AP1302_FLICK_CTRL			AP1302_REG_16BIT(0x5440)
+#define AP1302_FLICK_CTRL_FREQ(n)		((n) << 8)
+#define AP1302_FLICK_CTRL_ETC_IHDR_UP		BIT(6)
+#define AP1302_FLICK_CTRL_ETC_DIS		BIT(5)
+#define AP1302_FLICK_CTRL_FRC_OVERRIDE_MAX_ET	BIT(4)
+#define AP1302_FLICK_CTRL_FRC_OVERRIDE_UPPER_ET	BIT(3)
+#define AP1302_FLICK_CTRL_FRC_EN		BIT(2)
+#define AP1302_FLICK_CTRL_MODE_DISABLED		(0U << 0)
+#define AP1302_FLICK_CTRL_MODE_MANUAL		(1U << 0)
+#define AP1302_FLICK_CTRL_MODE_AUTO		(2U << 0)
+#define AP1302_SCENE_CTRL			AP1302_REG_16BIT(0x5454)
+#define AP1302_SCENE_CTRL_MODE_NORMAL		(0U << 0)
+#define AP1302_SCENE_CTRL_MODE_PORTRAIT		(1U << 0)
+#define AP1302_SCENE_CTRL_MODE_LANDSCAPE	(2U << 0)
+#define AP1302_SCENE_CTRL_MODE_SPORT		(3U << 0)
+#define AP1302_SCENE_CTRL_MODE_CLOSE_UP		(4U << 0)
+#define AP1302_SCENE_CTRL_MODE_NIGHT		(5U << 0)
+#define AP1302_SCENE_CTRL_MODE_TWILIGHT		(6U << 0)
+#define AP1302_SCENE_CTRL_MODE_BACKLIGHT	(7U << 0)
+#define AP1302_SCENE_CTRL_MODE_HIGH_SENSITIVE	(8U << 0)
+#define AP1302_SCENE_CTRL_MODE_NIGHT_PORTRAIT	(9U << 0)
+#define AP1302_SCENE_CTRL_MODE_BEACH		(10U << 0)
+#define AP1302_SCENE_CTRL_MODE_DOCUMENT		(11U << 0)
+#define AP1302_SCENE_CTRL_MODE_PARTY		(12U << 0)
+#define AP1302_SCENE_CTRL_MODE_FIREWORKS	(13U << 0)
+#define AP1302_SCENE_CTRL_MODE_SUNSET		(14U << 0)
+#define AP1302_SCENE_CTRL_MODE_AUTO		(0xffU << 0)
+
 /* System Registers */
 #define AP1302_BOOTDATA_STAGE			AP1302_REG_16BIT(0x6002)
 #define AP1302_SENSOR_SELECT			AP1302_REG_16BIT(0x600c)
@@ -199,6 +274,8 @@ struct ap1302_device {
 		struct v4l2_mbus_framefmt format;
 		const struct ap1302_format_info *info;
 	} formats[1];
+
+	struct v4l2_ctrl_handler ctrls;
 
 	struct ap1302_sensor sensors[2];
 };
@@ -526,7 +603,208 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 		return ret;
 	*/
 
+	__v4l2_ctrl_handler_setup(&ap1302->ctrls);
+
 	return 0;
+}
+
+/* -----------------------------------------------------------------------------
+  * V4L2 Controls
+ */
+
+static u16 ap1302_wb_values[] = {
+	AP1302_AWB_CTRL_MODE_OFF,	/* V4L2_WHITE_BALANCE_MANUAL */
+	AP1302_AWB_CTRL_MODE_AUTO,	/* V4L2_WHITE_BALANCE_AUTO */
+	AP1302_AWB_CTRL_MODE_A,		/* V4L2_WHITE_BALANCE_INCANDESCENT */
+	AP1302_AWB_CTRL_MODE_D50,	/* V4L2_WHITE_BALANCE_FLUORESCENT */
+	AP1302_AWB_CTRL_MODE_D65,	/* V4L2_WHITE_BALANCE_FLUORESCENT_H */
+	AP1302_AWB_CTRL_MODE_HORIZON,	/* V4L2_WHITE_BALANCE_HORIZON */
+	AP1302_AWB_CTRL_MODE_D65,	/* V4L2_WHITE_BALANCE_DAYLIGHT */
+	AP1302_AWB_CTRL_MODE_AUTO,	/* V4L2_WHITE_BALANCE_FLASH */
+	AP1302_AWB_CTRL_MODE_D75,	/* V4L2_WHITE_BALANCE_CLOUDY */
+	AP1302_AWB_CTRL_MODE_D75,	/* V4L2_WHITE_BALANCE_SHADE */
+};
+
+static int ap1302_set_wb_mode(struct ap1302_device *ap1302, s32 mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AWB_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_AWB_CTRL_MODE_MASK;
+	val |= ap1302_wb_values[mode];
+
+	if (mode == V4L2_WHITE_BALANCE_FLASH)
+		val |= AP1302_AWB_CTRL_FLASH;
+	else
+		val &= ~AP1302_AWB_CTRL_FLASH;
+
+	return ap1302_write(ap1302, AP1302_AWB_CTRL, val);
+}
+
+static int ap1302_set_zoom(struct ap1302_device *ap1302, s32 val)
+{
+	return ap1302_write(ap1302, AP1302_DZ_TGT_FCT, val);
+}
+
+static u16 ap1302_sfx_values[] = {
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_NONE */
+	AP1302_SFX_MODE_SFX_BW,		/* V4L2_COLORFX_BW */
+	AP1302_SFX_MODE_SFX_SEPIA1,	/* V4L2_COLORFX_SEPIA */
+	AP1302_SFX_MODE_SFX_NEGATIVE,	/* V4L2_COLORFX_NEGATIVE */
+	AP1302_SFX_MODE_SFX_EMBOSS,	/* V4L2_COLORFX_EMBOSS */
+	AP1302_SFX_MODE_SFX_SKETCH,	/* V4L2_COLORFX_SKETCH */
+	AP1302_SFX_MODE_SFX_BLUISH,	/* V4L2_COLORFX_SKY_BLUE */
+	AP1302_SFX_MODE_SFX_GREENISH,	/* V4L2_COLORFX_GRASS_GREEN */
+	AP1302_SFX_MODE_SFX_REDISH,	/* V4L2_COLORFX_SKIN_WHITEN */
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_VIVID */
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_AQUA */
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_ART_FREEZE */
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_SILHOUETTE */
+	AP1302_SFX_MODE_SFX_SOLARIZE,	/* V4L2_COLORFX_SOLARIZATION */
+	AP1302_SFX_MODE_SFX_ANTIQUE,	/* V4L2_COLORFX_ANTIQUE */
+	AP1302_SFX_MODE_SFX_NORMAL,	/* V4L2_COLORFX_SET_CBCR */
+};
+
+static int ap1302_set_special_effect(struct ap1302_device *ap1302, s32 val)
+{
+	return ap1302_write(ap1302, AP1302_SFX_MODE, ap1302_sfx_values[val]);
+}
+
+static u16 ap1302_scene_mode_values[] = {
+	AP1302_SCENE_CTRL_MODE_NORMAL,		/* V4L2_SCENE_MODE_NONE */
+	AP1302_SCENE_CTRL_MODE_BACKLIGHT,	/* V4L2_SCENE_MODE_BACKLIGHT */
+	AP1302_SCENE_CTRL_MODE_BEACH,		/* V4L2_SCENE_MODE_BEACH_SNOW */
+	AP1302_SCENE_CTRL_MODE_TWILIGHT,	/* V4L2_SCENE_MODE_CANDLE_LIGHT */
+	AP1302_SCENE_CTRL_MODE_NORMAL,		/* V4L2_SCENE_MODE_DAWN_DUSK */
+	AP1302_SCENE_CTRL_MODE_NORMAL,		/* V4L2_SCENE_MODE_FALL_COLORS */
+	AP1302_SCENE_CTRL_MODE_FIREWORKS,	/* V4L2_SCENE_MODE_FIREWORKS */
+	AP1302_SCENE_CTRL_MODE_LANDSCAPE,	/* V4L2_SCENE_MODE_LANDSCAPE */
+	AP1302_SCENE_CTRL_MODE_NIGHT,		/* V4L2_SCENE_MODE_NIGHT */
+	AP1302_SCENE_CTRL_MODE_PARTY,		/* V4L2_SCENE_MODE_PARTY_INDOOR */
+	AP1302_SCENE_CTRL_MODE_PORTRAIT,	/* V4L2_SCENE_MODE_PORTRAIT */
+	AP1302_SCENE_CTRL_MODE_SPORT,		/* V4L2_SCENE_MODE_SPORTS */
+	AP1302_SCENE_CTRL_MODE_SUNSET,		/* V4L2_SCENE_MODE_SUNSET */
+	AP1302_SCENE_CTRL_MODE_DOCUMENT,	/* V4L2_SCENE_MODE_TEXT */
+};
+
+static int ap1302_set_scene_mode(struct ap1302_device *ap1302, s32 val)
+{
+	return ap1302_write(ap1302, AP1302_SCENE_CTRL,
+			    ap1302_scene_mode_values[val]);
+}
+
+static const u16 ap1302_flicker_values[] = {
+	AP1302_FLICK_CTRL_MODE_DISABLED,
+	AP1302_FLICK_CTRL_FREQ(50) | AP1302_FLICK_CTRL_MODE_MANUAL,
+	AP1302_FLICK_CTRL_FREQ(60) | AP1302_FLICK_CTRL_MODE_MANUAL,
+	AP1302_FLICK_CTRL_MODE_AUTO,
+};
+
+static int ap1302_set_flicker_freq(struct ap1302_device *ap1302, s32 val)
+{
+	return ap1302_write(ap1302, AP1302_FLICK_CTRL,
+			    ap1302_flicker_values[val]);
+}
+
+static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ap1302_device *ap1302 =
+		container_of(ctrl->handler, struct ap1302_device, ctrls);
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
+		return ap1302_set_wb_mode(ap1302, ctrl->val);
+
+	case V4L2_CID_ZOOM_ABSOLUTE:
+		return ap1302_set_zoom(ap1302, ctrl->val);
+
+	case V4L2_CID_COLORFX:
+		return ap1302_set_special_effect(ap1302, ctrl->val);
+
+	case V4L2_CID_SCENE_MODE:
+		return ap1302_set_scene_mode(ap1302, ctrl->val);
+
+	case V4L2_CID_POWER_LINE_FREQUENCY:
+		return ap1302_set_flicker_freq(ap1302, ctrl->val);
+
+	default:
+		return -EINVAL;
+	}
+}
+
+static const struct v4l2_ctrl_ops ap1302_ctrl_ops = {
+	.s_ctrl = ap1302_s_ctrl,
+};
+
+static const struct v4l2_ctrl_config ap1302_ctrls[] = {
+	{
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE,
+		.min = 0,
+		.max = 9,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_ZOOM_ABSOLUTE,
+		.min = 0x0100,
+		.max = 0x1000,
+		.step = 1,
+		.def = 0x0100,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_COLORFX,
+		.min = 0,
+		.max = 15,
+		.def = 0,
+		.menu_skip_mask = BIT(15) | BIT(12) | BIT(11) | BIT(10) | BIT(9),
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_SCENE_MODE,
+		.min = 0,
+		.max = 13,
+		.def = 0,
+		.menu_skip_mask = BIT(5) | BIT(4),
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_POWER_LINE_FREQUENCY,
+		.min = 0,
+		.max = 3,
+		.def = 3,
+	},
+};
+
+static int ap1302_ctrls_init(struct ap1302_device *ap1302)
+{
+	unsigned int i;
+	int ret;
+
+	ret = v4l2_ctrl_handler_init(&ap1302->ctrls, ARRAY_SIZE(ap1302_ctrls));
+	if (ret)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302_ctrls); i++)
+		v4l2_ctrl_new_custom(&ap1302->ctrls, &ap1302_ctrls[i], NULL);
+
+	if (ap1302->ctrls.error) {
+		ret = ap1302->ctrls.error;
+		v4l2_ctrl_handler_free(&ap1302->ctrls);
+		return ret;
+	}
+
+	/* Use same lock for controls as for everything else. */
+	ap1302->ctrls.lock = &ap1302->lock;
+	ap1302->sd.ctrl_handler = &ap1302->ctrls;
+
+	return 0;
+}
+
+static void ap1302_ctrls_cleanup(struct ap1302_device *ap1302)
+{
+	v4l2_ctrl_handler_free(&ap1302->ctrls);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1023,17 +1301,22 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 	format->code = ap1302->formats[0].info->code;
 	format->colorspace = V4L2_COLORSPACE_SRGB;
 
+	ret = ap1302_ctrls_init(ap1302);
+	if (ret < 0)
+		goto error_media;
+
 	ret = v4l2_async_register_subdev(sd);
 	if (ret < 0) {
 		dev_err(ap1302->dev, "v4l2_async_register_subdev failed %d\n", ret);
-		goto err;
+		goto error_ctrls;
 	}
 
 	return 0;
 
-err:
+error_ctrls:
+	ap1302_ctrls_cleanup(ap1302);
+error_media:
 	media_entity_cleanup(&sd->entity);
-
 	return ret;
 }
 
@@ -1226,6 +1509,8 @@ static int ap1302_remove(struct i2c_client *client)
 
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
+
+	ap1302_ctrls_cleanup(ap1302);
 
 	mutex_destroy(&ap1302->lock);
 
