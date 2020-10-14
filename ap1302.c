@@ -41,6 +41,8 @@
 #define AP1302_ERROR				AP1302_REG_16BIT(0x0006)
 #define AP1302_ERR_FILE				AP1302_REG_32BIT(0x0008)
 #define AP1302_ERR_LINE				AP1302_REG_16BIT(0x000c)
+#define AP1302_SIPM_ERR_0			AP1302_REG_16BIT(0x0014)
+#define AP1302_SIPM_ERR_1			AP1302_REG_16BIT(0x0016)
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
 #define AP1302_CON_BUF(n)			AP1302_REG_16BIT(0x0a2c + (n))
 #define AP1302_CON_BUF_SIZE			512
@@ -1120,8 +1122,8 @@ static const char * const ap1302_warnings[] = {
 static int ap1302_log_status(struct v4l2_subdev *sd)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
-	u32 error, err_file, err_line;
 	u32 warning[4];
+	u32 error[3];
 	unsigned int i;
 	u32 value;
 	int ret;
@@ -1132,20 +1134,31 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 		return ret;
 
 	/* Print errors. */
-	ret = ap1302_read(ap1302, AP1302_ERROR, &error);
+	ret = ap1302_read(ap1302, AP1302_ERROR, &error[0]);
 	if (ret < 0)
 		return ret;
 
-	ret = ap1302_read(ap1302, AP1302_ERR_FILE, &err_file);
+	ret = ap1302_read(ap1302, AP1302_ERR_FILE, &error[1]);
 	if (ret < 0)
 		return ret;
 
-	ret = ap1302_read(ap1302, AP1302_ERR_LINE, &err_line);
+	ret = ap1302_read(ap1302, AP1302_ERR_LINE, &error[2]);
 	if (ret < 0)
 		return ret;
 
-	dev_info(ap1302->dev, "ERROR: 0x%04x (file 0x%08x:%u)\n", error,
-		 err_file, err_line);
+	dev_info(ap1302->dev, "ERROR: 0x%04x (file 0x%08x:%u)\n",
+		 error[0], error[1], error[2]);
+
+	ret = ap1302_read(ap1302, AP1302_SIPM_ERR_0, &error[0]);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_read(ap1302, AP1302_SIPM_ERR_1, &error[1]);
+	if (ret < 0)
+		return ret;
+
+	dev_info(ap1302->dev, "SIPM_ERR [0] 0x%04x [1] 0x%04x\n",
+		 error[0], error[1]);
 
 	/* Print warnings. */
 	for (i = 0; i < ARRAY_SIZE(warning); ++i) {
