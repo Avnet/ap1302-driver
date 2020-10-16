@@ -232,6 +232,8 @@
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
 
 /* Misc Registers */
+#define AP1302_REG_ADV_START			AP1302_REG_32BIT(0xe000)
+#define AP1302_ADVANCED_BASE			AP1302_REG_32BIT(0xf038)
 #define AP1302_SIP_CRC				AP1302_REG_16BIT(0xf052)
 
 enum ap1302_context {
@@ -647,6 +649,44 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 	return 0;
 }
 
+static int ap1302_stall(struct ap1302_device *ap1302, bool stall)
+{
+	int ret;
+
+	if (stall) {
+		ret = ap1302_write(ap1302, AP1302_SYS_START,
+				   AP1302_SYS_START_PLL_LOCK |
+				   AP1302_SYS_START_STALL_MODE_DISABLED);
+		if (ret < 0)
+			return ret;
+
+		ret = ap1302_write(ap1302, AP1302_SYS_START,
+				   AP1302_SYS_START_PLL_LOCK |
+				   AP1302_SYS_START_STALL_EN |
+				   AP1302_SYS_START_STALL_MODE_DISABLED);
+		if (ret < 0)
+			return ret;
+
+		msleep(200);
+
+		ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, 0x00230000);
+		if (ret < 0)
+			return ret;
+
+		ret = ap1302_write(ap1302, AP1302_REG_ADV_START, 0x000000c8);
+		if (ret < 0)
+			return ret;
+
+		return 0;
+	} else {
+		return ap1302_write(ap1302, AP1302_SYS_START,
+				    AP1302_SYS_START_PLL_LOCK |
+				    AP1302_SYS_START_STALL_STATUS |
+				    AP1302_SYS_START_STALL_EN |
+				    AP1302_SYS_START_STALL_MODE_DISABLED);
+	}
+}
+
 /* -----------------------------------------------------------------------------
   * V4L2 Controls
  */
@@ -1042,7 +1082,6 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
-	u32 reg;
 	int ret;
 
 	mutex_lock(&ap1302->lock);
@@ -1052,15 +1091,10 @@ static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 		if (ret < 0)
 			goto done;
 
-		reg = AP1302_SYS_START_PLL_LOCK
-		    | AP1302_SYS_START_GO;
+		ret = ap1302_stall(ap1302, false);
 	} else {
-		reg = AP1302_SYS_START_PLL_LOCK
-		    | AP1302_SYS_START_STALL_EN
-		    | AP1302_SYS_START_STALL_MODE_DISABLED;
+		ret = ap1302_stall(ap1302, true);
 	}
-
-	ret = ap1302_write(ap1302, AP1302_SYS_START, reg);
 
 done:
 	mutex_unlock(&ap1302->lock);
@@ -1361,7 +1395,8 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	if (ret)
 		return ret;
 
-	return 0;
+	/* The AP1302 starts outputting frames right after boot, stop it. */
+	return ap1302_stall(ap1302, true);
 }
 
 static int ap1302_detect_chip(struct ap1302_device *ap1302)
