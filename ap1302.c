@@ -984,10 +984,9 @@ static void ap1302_find_best_size(struct ap1302_device *ap1302,
 		 * Use the surface of the non-overlapping areas as the score
 		 * function.
 		 */
-		score = sensor_resolution->width * sensor_resolution->height
-		      + size->width * size->height
-		      - 2 * abs(min(size->width, sensor_resolution->width) *
-				min(size->height, sensor_resolution->width));
+		score = *width * *height + size->width * size->height
+		      - 2 * abs(min(size->width, *width) *
+				min(size->height, *height));
 
 		if (score < best_score) {
 			best_score = score;
