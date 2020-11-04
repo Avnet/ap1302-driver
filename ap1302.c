@@ -605,10 +605,6 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 {
 	int ret;
 
-	ret = ap1302_write(ap1302, AP1302_ATOMIC, AP1302_ATOMIC_RECORD);
-	if (ret < 0)
-		return ret;
-
 	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_WIDTH,
 			       ap1302->formats[0].format.width);
 	if (ret < 0)
@@ -623,26 +619,6 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 			       ap1302->formats[0].info->out_fmt);
 	if (ret < 0)
 		return ret;
-
-	/*
-	ret = ap1302_write(ap1302, AP1302_BUBBLE_OUT_FMT,
-			   AP1302_BUBBLE_OUT_FMT_FT_YUV_JFIF |
-			   AP1302_BUBBLE_OUT_FMT_FST_YUV_420);
-	if (ret < 0)
-		return ret;
-	*/
-
-	ap1302_write(ap1302, AP1302_ATOMIC,
-		     0x0008 | AP1302_ATOMIC_FINISH | AP1302_ATOMIC_RECORD);
-
-	/*
-	ret = ap1302_write(ap1302, AP1302_CTX_HINF_CTRL,
-			   AP1302_CTX_HINF_CTRL_MIPI_CONT_CLK |
-			   AP1302_CTX_HINF_CTRL_SPOOF |
-			   AP1302_CTX_HINF_CTRL_MIPI_MODE);
-	if (ret < 0)
-		return ret;
-	*/
 
 	__v4l2_ctrl_handler_setup(&ap1302->ctrls);
 
