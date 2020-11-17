@@ -561,6 +561,9 @@ static int ap1302_power_on_sensors(struct ap1302_device *ap1302)
 	unsigned int i;
 	int ret;
 
+	if (!ap1302->sensor_info->supplies)
+		return 0;
+
 	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
 		struct ap1302_sensor *sensor = &ap1302->sensors[i];
 
@@ -588,6 +591,9 @@ error:
 static void ap1302_power_off_sensors(struct ap1302_device *ap1302)
 {
 	unsigned int i;
+
+	if (!ap1302->sensor_info->supplies)
+		return;
 
 	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
 		struct ap1302_sensor *sensor = &ap1302->sensors[i];
