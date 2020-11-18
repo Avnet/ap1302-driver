@@ -352,6 +352,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.supplies = (const char * const[]) {
 			"vddpll",
 			"vaa",
+			"vdd",
 			"vddio",
 			NULL,
 		},
