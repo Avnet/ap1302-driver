@@ -1616,7 +1616,7 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		for (i = 0; i < num_supplies; ++i)
 			sensor->supplies[i].supply = sensor->info->supplies[i];
 
-		ret = regulator_bulk_get(ap1302->dev, num_supplies,
+		ret = regulator_bulk_get(sensor->dev, num_supplies,
 					 sensor->supplies);
 		if (ret < 0) {
 			dev_err(ap1302->dev,
