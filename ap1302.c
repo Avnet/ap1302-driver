@@ -343,8 +343,8 @@ static const struct ap1302_size ap1302_sizes[] = {
 static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	{
 		.compatible = "onnn,ar0144",
-		.name = "ar0114",
-		.resolution = { 2560, 800 },
+		.name = "ar0144",
+		.resolution = { 1280, 800 },
 	}, {
 		.compatible = "onnn,ar0330",
 		.name = "ar0330",
