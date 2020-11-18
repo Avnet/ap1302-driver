@@ -345,6 +345,12 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.compatible = "onnn,ar0144",
 		.name = "ar0144",
 		.resolution = { 1280, 800 },
+		.supplies = (const char * const[]) {
+			"vaa",
+			"vddio",
+			"vdd",
+			NULL,
+		},
 	}, {
 		.compatible = "onnn,ar0330",
 		.name = "ar0330",
