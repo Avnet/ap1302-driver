@@ -261,6 +261,7 @@ struct ap1302_sensor_info {
 
 struct ap1302_sensor {
 	const struct ap1302_sensor_info *info;
+	struct device *dev;
 	unsigned int num_supplies;
 	struct regulator_bulk_data *supplies;
 };
@@ -1524,6 +1525,11 @@ error_media:
 	return ret;
 }
 
+static void ap1302_sensor_dev_release(struct device *dev)
+{
+	kfree(dev);
+}
+
 static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 				  struct device_node *node)
 {
@@ -1570,6 +1576,27 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
 			 compat);
 		return -EINVAL;
+	}
+
+	/*
+	 * Register a device for the sensor, to support usage of the regulator
+	 * API.
+	 */
+	sensor->dev = kzalloc(sizeof(*sensor->dev), GFP_KERNEL);
+	if (!sensor->dev)
+		return -ENOMEM;
+
+	sensor->dev->parent = ap1302->dev;
+	sensor->dev->of_node = node;
+	sensor->dev->release = &ap1302_sensor_dev_release;
+	dev_set_name(sensor->dev, "%s-%s.%u", dev_name(ap1302->dev),
+		     sensor->info->name, reg);
+
+	ret = device_register(sensor->dev);
+	if (ret < 0) {
+		dev_err(ap1302->dev,
+			"Failed to register device for sensor %u\n", reg);
+		return ret;
 	}
 
 	/* Retrieve the power supplies for the sensor, if any. */
@@ -1664,6 +1691,8 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 		if (sensor->num_supplies)
 			regulator_bulk_free(sensor->num_supplies,
 					    sensor->supplies);
+
+		put_device(sensor->dev);
 	}
 
 	mutex_destroy(&ap1302->lock);
