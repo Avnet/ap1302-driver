@@ -1574,27 +1574,30 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 
 	/* Retrieve the power supplies for the sensor, if any. */
 	if (sensor->info->supplies) {
-		for (i = 0; sensor->info->supplies[i]; ++i)
+		unsigned int num_supplies;
+
+		for (num_supplies = 0; sensor->info->supplies[num_supplies];
+		     ++num_supplies)
 			;
 
-		sensor->num_supplies = i;
-		sensor->supplies = devm_kcalloc(ap1302->dev,
-						sensor->num_supplies,
+		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
 						sizeof(*sensor->supplies),
 						GFP_KERNEL);
 		if (!sensor->supplies)
 			return -ENOMEM;
 
-		for (i = 0; i < sensor->num_supplies; ++i)
+		for (i = 0; i < num_supplies; ++i)
 			sensor->supplies[i].supply = sensor->info->supplies[i];
 
-		ret = devm_regulator_bulk_get(ap1302->dev, sensor->num_supplies,
-					      sensor->supplies);
+		ret = regulator_bulk_get(ap1302->dev, num_supplies,
+					 sensor->supplies);
 		if (ret < 0) {
 			dev_err(ap1302->dev,
 				"Failed to get supplies for sensor %u\n", reg);
 			return ret;
 		}
+
+		sensor->num_supplies = i;
 	}
 
 	return 0;
@@ -1651,6 +1654,21 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	return 0;
 }
 
+static void ap1302_cleanup(struct ap1302_device *ap1302)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		if (sensor->num_supplies)
+			regulator_bulk_free(sensor->num_supplies,
+					    sensor->supplies);
+	}
+
+	mutex_destroy(&ap1302->lock);
+}
+
 static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct ap1302_device *ap1302;
@@ -1698,7 +1716,7 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 error_hw_cleanup:
 	ap1302_hw_cleanup(ap1302);
 error:
-	mutex_destroy(&ap1302->lock);
+	ap1302_cleanup(ap1302);
 	return ret;
 }
 
@@ -1716,7 +1734,7 @@ static int ap1302_remove(struct i2c_client *client)
 
 	ap1302_ctrls_cleanup(ap1302);
 
-	mutex_destroy(&ap1302->lock);
+	ap1302_cleanup(ap1302);
 
 	return 0;
 }
