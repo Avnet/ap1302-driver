@@ -575,6 +575,8 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 static int ap1302_dump_console(struct ap1302_device *ap1302)
 {
 	u8 *buffer;
+	u8 *endp;
+	u8 *p;
 	int ret;
 
 	buffer = kmalloc(AP1302_CON_BUF_SIZE + 1, GFP_KERNEL);
@@ -593,7 +595,13 @@ static int ap1302_dump_console(struct ap1302_device *ap1302)
 		       AP1302_CON_BUF_SIZE, true);
 
 	buffer[AP1302_CON_BUF_SIZE] = '\0';
-	printk(KERN_INFO "%s\n", buffer);
+
+	for (p = buffer; p < buffer + AP1302_CON_BUF_SIZE; p = endp + 1) {
+		endp = strchrnul(p, '\n');
+		*endp = '\0';
+
+		printk(KERN_INFO "console %s\n", p);
+	}
 
 	ret = 0;
 
