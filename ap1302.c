@@ -1017,8 +1017,8 @@ static void ap1302_find_best_size(struct ap1302_device *ap1302,
 		 * function.
 		 */
 		score = *width * *height + size->width * size->height
-		      - 2 * abs(min(size->width, *width) *
-				min(size->height, *height));
+		      - 2 * min(size->width, *width) *
+			    min(size->height, *height);
 
 		if (score < best_score) {
 			best_score = score;
