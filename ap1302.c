@@ -29,10 +29,12 @@
 #define AP1302_FW_WINDOW_SIZE			0x2000
 #define AP1302_FW_WINDOW_OFFSET			0x8000
 
-#define AP1302_REG_16BIT(n)			((2 << 16) | (n))
-#define AP1302_REG_32BIT(n)			((4 << 16) | (n))
-#define AP1302_REG_SIZE(n)			((n) >> 16)
-#define AP1302_REG_ADDR(n)			((n) & 0xffff)
+#define AP1302_REG_16BIT(n)			((2 << 24) | (n))
+#define AP1302_REG_32BIT(n)			((4 << 24) | (n))
+#define AP1302_REG_SIZE(n)			((n) >> 24)
+#define AP1302_REG_ADDR(n)			((n) & 0x0000ffff)
+#define AP1302_REG_PAGE(n)			((n) & 0x00ff0000)
+#define AP1302_REG_PAGE_MASK			0x00ff0000
 
 /* Info Registers */
 #define AP1302_CHIP_VERSION			AP1302_REG_16BIT(0x0000)
@@ -232,9 +234,32 @@
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
 
 /* Misc Registers */
-#define AP1302_REG_ADV_START			AP1302_REG_32BIT(0xe000)
+#define AP1302_REG_ADV_START			0xe000
 #define AP1302_ADVANCED_BASE			AP1302_REG_32BIT(0xf038)
 #define AP1302_SIP_CRC				AP1302_REG_16BIT(0xf052)
+
+/* Advanced System Registers */
+#define AP1302_ADV_IRQ_SYS_INTE			AP1302_REG_32BIT(0x00230000)
+#define AP1302_ADV_IRQ_SYS_INTE_TEST_COUNT	BIT(25)
+#define AP1302_ADV_IRQ_SYS_INTE_HINF_1		BIT(24)
+#define AP1302_ADV_IRQ_SYS_INTE_HINF_0		BIT(23)
+#define AP1302_ADV_IRQ_SYS_INTE_SINF_B_MIPI_L	(7U << 20)
+#define AP1302_ADV_IRQ_SYS_INTE_SINF_B_MIPI	BIT(19)
+#define AP1302_ADV_IRQ_SYS_INTE_SINF_A_MIPI_L	(15U << 14)
+#define AP1302_ADV_IRQ_SYS_INTE_SINF_A_MIPI	BIT(13)
+#define AP1302_ADV_IRQ_SYS_INTE_SINF		BIT(12)
+#define AP1302_ADV_IRQ_SYS_INTE_IPIPE_S		BIT(11)
+#define AP1302_ADV_IRQ_SYS_INTE_IPIPE_B		BIT(10)
+#define AP1302_ADV_IRQ_SYS_INTE_IPIPE_A		BIT(9)
+#define AP1302_ADV_IRQ_SYS_INTE_IP		BIT(8)
+#define AP1302_ADV_IRQ_SYS_INTE_TIMER		BIT(7)
+#define AP1302_ADV_IRQ_SYS_INTE_SIPM		(3U << 6)
+#define AP1302_ADV_IRQ_SYS_INTE_SIPS_ADR_RANGE	BIT(5)
+#define AP1302_ADV_IRQ_SYS_INTE_SIPS_DIRECT_WRITE	BIT(4)
+#define AP1302_ADV_IRQ_SYS_INTE_SIPS_FIFO_WRITE	BIT(3)
+#define AP1302_ADV_IRQ_SYS_INTE_SPI		BIT(2)
+#define AP1302_ADV_IRQ_SYS_INTE_GPIO_CNT	BIT(1)
+#define AP1302_ADV_IRQ_SYS_INTE_GPIO_PIN	BIT(0)
 
 enum ap1302_context {
 	AP1302_CTX_PREVIEW = 0,
@@ -275,6 +300,7 @@ struct ap1302_device {
 	struct clk *clock;
 	struct regmap *regmap16;
 	struct regmap *regmap32;
+	u32 reg_page;
 
 	const struct firmware *fw;
 
@@ -397,7 +423,71 @@ static const struct regmap_config ap1302_reg32_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
+static int __ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
+{
+	unsigned int size = AP1302_REG_SIZE(reg);
+	u16 addr = AP1302_REG_ADDR(reg);
+	int ret;
+
+	switch (size) {
+	case 2:
+		ret = regmap_write(ap1302->regmap16, addr, val);
+		break;
+	case 4:
+		ret = regmap_write(ap1302->regmap32, addr, val);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (ret) {
+		dev_err(ap1302->dev, "%s: register 0x%04x %s failed: %d\n",
+			__func__, addr, "write", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
+{
+	u32 page = AP1302_REG_PAGE(reg);
+	int ret;
+
+	if (page) {
+		if (ap1302->reg_page != page) {
+			ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, page);
+			if (ret < 0)
+				return ret;
+
+			ap1302->reg_page = page;
+		}
+
+		reg &= ~AP1302_REG_PAGE_MASK;
+		reg += AP1302_REG_ADV_START;
+	}
+
+	return __ap1302_write(ap1302, reg, val);
+}
+
+static int ap1302_write_ctx(struct ap1302_device *ap1302,
+			    enum ap1302_context ctx, u32 reg, u32 val)
+{
+	/*
+	 * The snapshot context is missing the S1_SENSOR_MODE register,
+	 * shifting all the addresses for the registers that come after it.
+	 */
+	if (ctx == AP1302_CTX_SNAPSHOT) {
+		if (AP1302_REG_ADDR(reg) >= AP1302_CTX_S1_SENSOR_MODE)
+			reg -= 2;
+	}
+
+	reg += ctx * AP1302_CTX_OFFSET;
+
+	return ap1302_write(ap1302, reg, val);
+}
+
+static int __ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 {
 	unsigned int size = AP1302_REG_SIZE(reg);
 	u16 addr = AP1302_REG_ADDR(reg);
@@ -426,47 +516,25 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 	return 0;
 }
 
-static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
+static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 {
-	unsigned int size = AP1302_REG_SIZE(reg);
-	u16 addr = AP1302_REG_ADDR(reg);
+	u32 page = AP1302_REG_PAGE(reg);
 	int ret;
 
-	switch (size) {
-	case 2:
-		ret = regmap_write(ap1302->regmap16, addr, val);
-		break;
-	case 4:
-		ret = regmap_write(ap1302->regmap32, addr, val);
-		break;
-	default:
-		return -EINVAL;
+	if (page) {
+		if (ap1302->reg_page != page) {
+			ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, page);
+			if (ret < 0)
+				return ret;
+
+			ap1302->reg_page = page;
+		}
+
+		reg &= ~AP1302_REG_PAGE_MASK;
+		reg += AP1302_REG_ADV_START;
 	}
 
-	if (ret) {
-		dev_err(ap1302->dev, "%s: register 0x%04x %s failed: %d\n",
-			__func__, addr, "write", ret);
-		return ret;
-	}
-
-	return 0;
-}
-
-static int ap1302_write_ctx(struct ap1302_device *ap1302,
-			    enum ap1302_context ctx, u32 reg, u32 val)
-{
-	/*
-	 * The snapshot context is missing the S1_SENSOR_MODE register,
-	 * shifting all the addresses for the registers that come after it.
-	 */
-	if (ctx == AP1302_CTX_SNAPSHOT) {
-		if (AP1302_REG_ADDR(reg) >= AP1302_CTX_S1_SENSOR_MODE)
-			reg -= 2;
-	}
-
-	reg += ctx * AP1302_CTX_OFFSET;
-
-	return ap1302_write(ap1302, reg, val);
+	return __ap1302_read(ap1302, reg, val);
 }
 
 /* -----------------------------------------------------------------------------
@@ -661,11 +729,9 @@ static int ap1302_stall(struct ap1302_device *ap1302, bool stall)
 
 		msleep(200);
 
-		ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, 0x00230000);
-		if (ret < 0)
-			return ret;
-
-		ret = ap1302_write(ap1302, AP1302_REG_ADV_START, 0x000000c8);
+		ret = ap1302_write(ap1302, AP1302_ADV_IRQ_SYS_INTE,
+				   AP1302_ADV_IRQ_SYS_INTE_SIPM |
+				   AP1302_ADV_IRQ_SYS_INTE_SIPS_FIFO_WRITE);
 		if (ret < 0)
 			return ret;
 
