@@ -261,6 +261,9 @@
 #define AP1302_ADV_IRQ_SYS_INTE_GPIO_CNT	BIT(1)
 #define AP1302_ADV_IRQ_SYS_INTE_GPIO_PIN	BIT(0)
 
+/* Advanced Slave MIPI Registers */
+#define AP1302_ADV_CAPTURE_A_FV_CNT		AP1302_REG_32BIT(0x00490040)
+
 enum ap1302_context {
 	AP1302_CTX_PREVIEW = 0,
 	AP1302_CTX_SNAPSHOT = 1,
@@ -1213,6 +1216,9 @@ static const char * const ap1302_warnings[] = {
 static int ap1302_log_status(struct v4l2_subdev *sd)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
+	u16 frame_count_icp;
+	u16 frame_count_brac;
+	u16 frame_count_hinf;
 	u32 warning[4];
 	u32 error[3];
 	unsigned int i;
@@ -1274,8 +1280,17 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 	if (ret < 0)
 		return ret;
 
-	dev_info(ap1302->dev, "Frame counters: HINF %u, BRAC %u\n",
-		 value >> 8, value & 0xff);
+	frame_count_hinf = value >> 8;
+	frame_count_brac = value & 0xff;
+
+	ret = ap1302_read(ap1302, AP1302_ADV_CAPTURE_A_FV_CNT, &value);
+	if (ret < 0)
+		return ret;
+
+	frame_count_icp = value & 0xffff;
+
+	dev_info(ap1302->dev, "Frame counters: ICP %u, HINF %u, BRAC %u\n",
+		 frame_count_icp, frame_count_hinf, frame_count_brac);
 
 	return 0;
 }
