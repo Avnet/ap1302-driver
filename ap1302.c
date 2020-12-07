@@ -603,7 +603,7 @@ static int ap1302_dump_console(struct ap1302_device *ap1302)
 
 	buffer[AP1302_CON_BUF_SIZE] = '\0';
 
-	for (p = buffer; p < buffer + AP1302_CON_BUF_SIZE; p = endp + 1) {
+	for (p = buffer; p < buffer + AP1302_CON_BUF_SIZE && *p; p = endp + 1) {
 		endp = strchrnul(p, '\n');
 		*endp = '\0';
 
