@@ -320,10 +320,12 @@ struct ap1302_device {
 
 	struct v4l2_subdev sd;
 	struct media_pad pad;
+
 	struct {
 		struct v4l2_mbus_framefmt format;
 		const struct ap1302_format_info *info;
 	} formats[1];
+	unsigned int width_factor;
 
 	struct v4l2_ctrl_handler ctrls;
 
@@ -683,7 +685,8 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 	int ret;
 
 	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_WIDTH,
-			       ap1302->formats[0].format.width);
+			       ap1302->formats[0].format.width /
+			       ap1302->width_factor);
 	if (ret < 0)
 		return ret;
 
@@ -967,7 +970,7 @@ static int ap1302_init_cfg(struct v4l2_subdev *sd,
 
 	format = ap1302_get_pad_format(ap1302, cfg, 0, which);
 
-	format->width = sensor_resolution->width;
+	format->width = sensor_resolution->width * ap1302->width_factor;
 	format->height = sensor_resolution->height;
 
 	format->field = V4L2_FIELD_NONE;
@@ -992,6 +995,7 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 	unsigned int i;
 
 	if (fse->index)
@@ -1006,7 +1010,7 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 	if (i >= ARRAY_SIZE(supported_video_formats))
 		return -EINVAL;
 
-	fse->min_width = AP1302_MIN_WIDTH;
+	fse->min_width = AP1302_MIN_WIDTH * ap1302->width_factor;
 	fse->min_height = AP1302_MIN_HEIGHT;
 	fse->max_width = AP1302_MAX_WIDTH;
 	fse->max_height = AP1302_MAX_HEIGHT;
@@ -1053,11 +1057,13 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 		info = &supported_video_formats[0];
 
 	/*
-	 * Clamp the size. The width must be a multiple of 4 and the height a
-	 * multiple of 2.
+	 * Clamp the size. The width must be a multiple of 4 (or 8 in the
+	 * dual-sensor case) and the height a multiple of 2.
 	 */
-	fmt->format.width = clamp(ALIGN_DOWN(fmt->format.width, 4),
-				  AP1302_MIN_WIDTH, AP1302_MAX_WIDTH);
+	fmt->format.width = clamp(ALIGN_DOWN(fmt->format.width,
+					     4 * ap1302->width_factor),
+				  AP1302_MIN_WIDTH * ap1302->width_factor,
+				  AP1302_MAX_WIDTH);
 	fmt->format.height = clamp(ALIGN_DOWN(fmt->format.height, 2),
 				   AP1302_MIN_HEIGHT, AP1302_MAX_HEIGHT);
 
@@ -1734,6 +1740,7 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 		 * with the test pattern generator.
 		 */
 		ap1302->sensor_info = &ap1302_sensor_info_tpg;
+		ap1302->width_factor = 1;
 		ret = 0;
 		goto done;
 	}
@@ -1764,7 +1771,10 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	if (!num_sensors) {
 		dev_err(ap1302->dev, "No sensor found\n");
 		ret = -EINVAL;
+		goto done;
 	}
+
+	ap1302->width_factor = num_sensors;
 
 done:
 	of_node_put(sensors);
