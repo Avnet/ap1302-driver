@@ -29,6 +29,11 @@
 #define AP1302_FW_WINDOW_SIZE			0x2000
 #define AP1302_FW_WINDOW_OFFSET			0x8000
 
+#define AP1302_MIN_WIDTH			4U
+#define AP1302_MIN_HEIGHT 			2U
+#define AP1302_MAX_WIDTH			4224U
+#define AP1302_MAX_HEIGHT 			4092U
+
 #define AP1302_REG_16BIT(n)			((2 << 24) | (n))
 #define AP1302_REG_32BIT(n)			((4 << 24) | (n))
 #define AP1302_REG_SIZE(n)			((n) >> 24)
@@ -348,26 +353,6 @@ static const struct ap1302_format_info supported_video_formats[] = {
 		.out_fmt = AP1302_CTX_OUT_FMT_FT_YUV_JFIF
 			 | AP1302_CTX_OUT_FMT_FST_YUV_420,
 	},
-};
-
-static const struct ap1302_size ap1302_sizes[] = {
-	/* Keep the sizes sorted in increasing order. */
-	{
-		.width = 640,
-		.height = 480,
-	}, {
-		.width = 720,
-		.height = 480,
-	}, {
-		.width = 1280,
-		.height = 720,
-	}, {
-		.width = 1920,
-		.height = 1080,
-	}, {
-		.width = 3840,
-		.height = 2160,
-	}
 };
 
 /* -----------------------------------------------------------------------------
@@ -979,24 +964,11 @@ static int ap1302_init_cfg(struct v4l2_subdev *sd,
 	const struct ap1302_size *sensor_resolution =
 		&ap1302->sensor_info->resolution;
 	struct v4l2_mbus_framefmt *format;
-	int i;
 
 	format = ap1302_get_pad_format(ap1302, cfg, 0, which);
 
-	/* Default to the largest size compatible with the sensor resolution. */
-	for (i = ARRAY_SIZE(ap1302_sizes) - 1; i >= 0; --i) {
-		const struct ap1302_size *size = &ap1302_sizes[i];
-
-		if (size->width <= sensor_resolution->width &&
-		    size->height <= sensor_resolution->height) {
-			format->width = size->width;
-			format->height = size->height;
-			break;
-		}
-	}
-
-	if (i < 0)
-		return -EINVAL;
+	format->width = sensor_resolution->width;
+	format->height = sensor_resolution->height;
 
 	format->field = V4L2_FIELD_NONE;
 	format->code = ap1302->formats[0].info->code;
@@ -1020,20 +992,9 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_frame_size_enum *fse)
 {
-	struct ap1302_device *ap1302 = to_ap1302(sd);
-	const struct ap1302_size *size;
 	unsigned int i;
 
-	/*
-	 * Enumerate the preset resolutions that don't exceed the sensor
-	 * resolution.
-	 */
-	if (fse->index >= ARRAY_SIZE(ap1302_sizes))
-		return -EINVAL;
-
-	size = &ap1302_sizes[fse->index];
-	if (size->width > ap1302->sensor_info->resolution.width ||
-	    size->height > ap1302->sensor_info->resolution.height)
+	if (fse->index)
 		return -EINVAL;
 
 	/* Validate the media bus code. */
@@ -1043,12 +1004,12 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 	}
 
 	if (i >= ARRAY_SIZE(supported_video_formats))
-		return-EINVAL;
+		return -EINVAL;
 
-	fse->min_width = size->width;
-	fse->min_height = size->height;
-	fse->max_width = size->width;
-	fse->max_height = size->height;
+	fse->min_width = AP1302_MIN_WIDTH;
+	fse->min_height = AP1302_MIN_HEIGHT;
+	fse->max_width = AP1302_MAX_WIDTH;
+	fse->max_height = AP1302_MAX_HEIGHT;
 
 	return 0;
 }
@@ -1067,41 +1028,6 @@ static int ap1302_get_fmt(struct v4l2_subdev *sd,
 	mutex_unlock(&ap1302->lock);
 
 	return 0;
-}
-
-static void ap1302_find_best_size(struct ap1302_device *ap1302,
-				  u32 *width, u32 *height)
-{
-	const struct ap1302_size *sensor_resolution =
-		&ap1302->sensor_info->resolution;
-	const struct ap1302_size *best_size;
-	unsigned int best_score = UINT_MAX;
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_SIZE(ap1302_sizes); ++i) {
-		const struct ap1302_size *size = &ap1302_sizes[i];
-		unsigned int score;
-
-		if (size->width > sensor_resolution->width ||
-		    size->height > sensor_resolution->height)
-			break;
-
-		/*
-		 * Use the surface of the non-overlapping areas as the score
-		 * function.
-		 */
-		score = *width * *height + size->width * size->height
-		      - 2 * min(size->width, *width) *
-			    min(size->height, *height);
-
-		if (score < best_score) {
-			best_score = score;
-			best_size = size;
-		}
-	}
-
-	*width = best_size->width;
-	*height = best_size->height;
 }
 
 static int ap1302_set_fmt(struct v4l2_subdev *sd,
@@ -1126,8 +1052,14 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	if (!info)
 		info = &supported_video_formats[0];
 
-	/* Find suitable supported size. */
-	ap1302_find_best_size(ap1302, &fmt->format.width, &fmt->format.height);
+	/*
+	 * Clamp the size. The width must be a multiple of 4 and the height a
+	 * multiple of 2.
+	 */
+	fmt->format.width = clamp(ALIGN_DOWN(fmt->format.width, 4),
+				  AP1302_MIN_WIDTH, AP1302_MAX_WIDTH);
+	fmt->format.height = clamp(ALIGN_DOWN(fmt->format.height, 2),
+				   AP1302_MIN_HEIGHT, AP1302_MAX_HEIGHT);
 
 	mutex_lock(&ap1302->lock);
 
