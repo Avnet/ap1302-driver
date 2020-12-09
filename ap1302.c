@@ -1692,7 +1692,7 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 	if (ret < 0) {
 		dev_err(ap1302->dev,
 			"Failed to register device for sensor %u\n", reg);
-		return ret;
+		goto error;
 	}
 
 	/* Retrieve the power supplies for the sensor, if any. */
@@ -1706,8 +1706,10 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
 						sizeof(*sensor->supplies),
 						GFP_KERNEL);
-		if (!sensor->supplies)
-			return -ENOMEM;
+		if (!sensor->supplies) {
+			ret = -ENOMEM;
+			goto error;
+		}
 
 		for (i = 0; i < num_supplies; ++i)
 			sensor->supplies[i].supply = sensor->info->supplies[i];
@@ -1717,13 +1719,18 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		if (ret < 0) {
 			dev_err(ap1302->dev,
 				"Failed to get supplies for sensor %u\n", reg);
-			return ret;
+			goto error;
 		}
 
 		sensor->num_supplies = i;
 	}
 
 	return 0;
+
+error:
+	put_device(sensor->dev);
+	sensor->dev = NULL;
+	return ret;
 }
 
 static int ap1302_parse_of(struct ap1302_device *ap1302)
