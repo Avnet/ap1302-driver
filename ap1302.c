@@ -1545,7 +1545,7 @@ static int ap1302_hw_init(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev,
 			"Firmware load retries exceeded, aborting\n");
 		ret = -ETIMEDOUT;
-		goto error_power;
+		goto error_power_sensors;
 	}
 
 	return 0;
