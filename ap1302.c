@@ -271,6 +271,13 @@
 
 struct ap1302_device;
 
+enum {
+	AP1302_PAD_SINK_0,
+	AP1302_PAD_SINK_1,
+	AP1302_PAD_SOURCE,
+	AP1302_PAD_MAX,
+};
+
 enum ap1302_context {
 	AP1302_CTX_PREVIEW = 0,
 	AP1302_CTX_SNAPSHOT = 1,
@@ -282,6 +289,11 @@ struct ap1302_format_info {
 	u16 out_fmt;
 };
 
+struct ap1302_format {
+	struct v4l2_mbus_framefmt format;
+	const struct ap1302_format_info *info;
+};
+
 struct ap1302_size {
 	unsigned int width;
 	unsigned int height;
@@ -291,6 +303,7 @@ struct ap1302_sensor_info {
 	const char *model;
 	const char *name;
 	struct ap1302_size resolution;
+	u32 format;
 	const char * const *supplies;
 };
 
@@ -319,12 +332,8 @@ struct ap1302_device {
 	struct mutex lock;	/* Protects formats */
 
 	struct v4l2_subdev sd;
-	struct media_pad pad;
-
-	struct {
-		struct v4l2_mbus_framefmt format;
-		const struct ap1302_format_info *info;
-	} formats[1];
+	struct media_pad pads[AP1302_PAD_MAX];
+	struct ap1302_format formats[AP1302_PAD_MAX];
 	unsigned int width_factor;
 
 	struct v4l2_ctrl_handler ctrls;
@@ -366,6 +375,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.model = "onnn,ar0144",
 		.name = "ar0144",
 		.resolution = { 1280, 800 },
+		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
 		.supplies = (const char * const[]) {
 			"vaa",
 			"vddio",
@@ -376,6 +386,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.model = "onnn,ar0330",
 		.name = "ar0330",
 		.resolution = { 2304, 1536 },
+		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
 		.supplies = (const char * const[]) {
 			"vddpll",
 			"vaa",
@@ -387,6 +398,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.model = "onnn,ar1335",
 		.name = "ar1335",
 		.resolution = { 4208, 3120 },
+		.format = MEDIA_BUS_FMT_SGRBG10_1X10,
 	},
 };
 
@@ -682,21 +694,21 @@ done:
 
 static int ap1302_configure(struct ap1302_device *ap1302)
 {
+	const struct ap1302_format *format = &ap1302->formats[AP1302_PAD_SOURCE];
 	int ret;
 
 	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_WIDTH,
-			       ap1302->formats[0].format.width /
-			       ap1302->width_factor);
+			       format->format.width / ap1302->width_factor);
 	if (ret < 0)
 		return ret;
 
 	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_HEIGHT,
-			       ap1302->formats[0].format.height);
+			       format->format.height);
 	if (ret < 0)
 		return ret;
 
 	ret = ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_OUT_FMT,
-			       ap1302->formats[0].info->out_fmt);
+			       format->info->out_fmt);
 	if (ret < 0)
 		return ret;
 
@@ -964,18 +976,27 @@ static int ap1302_init_cfg(struct v4l2_subdev *sd,
 {
 	u32 which = cfg ? V4L2_SUBDEV_FORMAT_TRY : V4L2_SUBDEV_FORMAT_ACTIVE;
 	struct ap1302_device *ap1302 = to_ap1302(sd);
-	const struct ap1302_size *sensor_resolution =
-		&ap1302->sensor_info->resolution;
-	struct v4l2_mbus_framefmt *format;
+	const struct ap1302_sensor_info *info = ap1302->sensor_info;
+	unsigned int pad;
 
-	format = ap1302_get_pad_format(ap1302, cfg, 0, which);
+	for (pad = 0; pad < ARRAY_SIZE(ap1302->formats); ++pad) {
+		struct v4l2_mbus_framefmt *format =
+			ap1302_get_pad_format(ap1302, cfg, pad, which);
 
-	format->width = sensor_resolution->width * ap1302->width_factor;
-	format->height = sensor_resolution->height;
+		format->width = info->resolution.width;
+		format->height = info->resolution.height;
 
-	format->field = V4L2_FIELD_NONE;
-	format->code = ap1302->formats[0].info->code;
-	format->colorspace = V4L2_COLORSPACE_SRGB;
+		/*
+		 * The source pad combines images side by side in multi-sensor
+		 * setup.
+		 */
+		if (pad == AP1302_PAD_SOURCE)
+			format->width *= ap1302->width_factor;
+
+		format->field = V4L2_FIELD_NONE;
+		format->code = ap1302->formats[pad].info->code;
+		format->colorspace = V4L2_COLORSPACE_SRGB;
+	}
 
 	return 0;
 }
@@ -984,10 +1005,25 @@ static int ap1302_enum_mbus_code(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index >= ARRAY_SIZE(supported_video_formats))
-		return -EINVAL;
+	struct ap1302_device *ap1302 = to_ap1302(sd);
 
-	code->code = supported_video_formats[code->index].code;
+	if (code->pad != AP1302_PAD_SOURCE) {
+		/*
+		 * On the sink pads, only the format produced by the sensor is
+		 * supported.
+		 */
+		if (code->index)
+			return -EINVAL;
+
+		code->code = ap1302->sensor_info->format;
+	} else {
+		/* On the source pad, multiple formats are supported. */
+		if (code->index >= ARRAY_SIZE(supported_video_formats))
+			return -EINVAL;
+
+		code->code = supported_video_formats[code->index].code;
+	}
+
 	return 0;
 }
 
@@ -1001,19 +1037,36 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 	if (fse->index)
 		return -EINVAL;
 
-	/* Validate the media bus code. */
-	for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
-		if (supported_video_formats[i].code == fse->code)
-			break;
+	if (fse->pad != AP1302_PAD_SOURCE) {
+		/*
+		 * On the sink pads, only the size produced by the sensor is
+		 * supported.
+		 */
+		if (fse->code != ap1302->sensor_info->format)
+			return -EINVAL;
+
+		fse->min_width = ap1302->sensor_info->resolution.width;
+		fse->min_height = ap1302->sensor_info->resolution.height;
+		fse->max_width = ap1302->sensor_info->resolution.width;
+		fse->max_height = ap1302->sensor_info->resolution.height;
+	} else {
+		/*
+		 * On the source pad, the AP1302 can freely scale within the
+		 * scaler's limits.
+		 */
+		for (i = 0; i < ARRAY_SIZE(supported_video_formats); i++) {
+			if (supported_video_formats[i].code == fse->code)
+				break;
+		}
+
+		if (i >= ARRAY_SIZE(supported_video_formats))
+			return -EINVAL;
+
+		fse->min_width = AP1302_MIN_WIDTH * ap1302->width_factor;
+		fse->min_height = AP1302_MIN_HEIGHT;
+		fse->max_width = AP1302_MAX_WIDTH;
+		fse->max_height = AP1302_MAX_HEIGHT;
 	}
-
-	if (i >= ARRAY_SIZE(supported_video_formats))
-		return -EINVAL;
-
-	fse->min_width = AP1302_MIN_WIDTH * ap1302->width_factor;
-	fse->min_height = AP1302_MIN_HEIGHT;
-	fse->max_width = AP1302_MAX_WIDTH;
-	fse->max_height = AP1302_MAX_HEIGHT;
 
 	return 0;
 }
@@ -1042,6 +1095,10 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	const struct ap1302_format_info *info = NULL;
 	struct v4l2_mbus_framefmt *format;
 	unsigned int i;
+
+	/* Formats on the sink pads can't be changed. */
+	if (fmt->pad != AP1302_PAD_SOURCE)
+		return ap1302_get_fmt(sd, cfg, fmt);
 
 	format = ap1302_get_pad_format(ap1302, cfg, fmt->pad, fmt->which);
 
@@ -1644,6 +1701,7 @@ static void ap1302_hw_cleanup(struct ap1302_device *ap1302)
 static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 {
 	struct v4l2_subdev *sd;
+	unsigned int i;
 	int ret;
 
 	sd = &ap1302->sd;
@@ -1659,15 +1717,19 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	sd->entity.ops = &ap1302_media_ops;
 
-	ap1302->pad.flags = MEDIA_PAD_FL_SOURCE;
+	for (i = 0; i < ARRAY_SIZE(ap1302->pads); ++i)
+		ap1302->pads[i].flags = i == AP1302_PAD_SOURCE
+				      ? MEDIA_PAD_FL_SOURCE : MEDIA_PAD_FL_SINK;
 
-	ret = media_entity_pads_init(&sd->entity, 1, &ap1302->pad);
+	ret = media_entity_pads_init(&sd->entity, ARRAY_SIZE(ap1302->pads),
+				     ap1302->pads);
 	if (ret < 0) {
 		dev_err(ap1302->dev, "media_entity_init failed %d\n", ret);
 		return ret;
 	}
 
-	ap1302->formats[0].info = &supported_video_formats[0];
+	for (i = 0; i < ARRAY_SIZE(ap1302->formats); ++i)
+		ap1302->formats[i].info = &supported_video_formats[0];
 
 	ret = ap1302_init_cfg(sd, NULL);
 	if (ret < 0)
