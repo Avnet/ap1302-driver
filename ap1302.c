@@ -314,7 +314,15 @@ struct ap1302_sensor {
 	struct device *dev;
 	unsigned int num_supplies;
 	struct regulator_bulk_data *supplies;
+
+	struct v4l2_subdev sd;
+	struct media_pad pad;
 };
+
+static inline struct ap1302_sensor *to_ap1302_sensor(struct v4l2_subdev *sd)
+{
+	return container_of(sd, struct ap1302_sensor, sd);
+}
 
 struct ap1302_device {
 	struct device *dev;
@@ -1295,6 +1303,35 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 	return 0;
 }
 
+static int ap1302_subdev_registered(struct v4l2_subdev *sd)
+{
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		if (!sensor->dev)
+			continue;
+
+		dev_dbg(ap1302->dev, "registering sensor %u\n", i);
+
+		ret = v4l2_device_register_subdev(sd->v4l2_dev, &sensor->sd);
+		if (ret)
+			return ret;
+
+		ret = media_create_pad_link(&sensor->sd.entity, 0,
+					    &sd->entity, i,
+					    MEDIA_LNK_FL_IMMUTABLE |
+					    MEDIA_LNK_FL_ENABLED);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static const struct media_entity_operations ap1302_media_ops = {
 	.link_validate = v4l2_subdev_link_validate
 };
@@ -1321,9 +1358,77 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 	.pad = &ap1302_pad_ops,
 };
 
+static const struct v4l2_subdev_internal_ops ap1302_subdev_internal_ops = {
+	.registered = ap1302_subdev_registered,
+};
+
 /* -----------------------------------------------------------------------------
  * Sensor
  */
+
+static int ap1302_sensor_enum_mbus_code(struct v4l2_subdev *sd,
+					struct v4l2_subdev_pad_config *cfg,
+					struct v4l2_subdev_mbus_code_enum *code)
+{
+	struct ap1302_sensor *sensor = to_ap1302_sensor(sd);
+	const struct ap1302_sensor_info *info = sensor->ap1302->sensor_info;
+
+	if (code->index)
+		return -EINVAL;
+
+	code->code = info->format;
+	return 0;
+}
+
+static int ap1302_sensor_enum_frame_size(struct v4l2_subdev *sd,
+					 struct v4l2_subdev_pad_config *cfg,
+					 struct v4l2_subdev_frame_size_enum *fse)
+{
+	struct ap1302_sensor *sensor = to_ap1302_sensor(sd);
+	const struct ap1302_sensor_info *info = sensor->ap1302->sensor_info;
+
+	if (fse->index)
+		return -EINVAL;
+
+	if (fse->code != info->format)
+		return -EINVAL;
+
+	fse->min_width = info->resolution.width;
+	fse->min_height = info->resolution.height;
+	fse->max_width = info->resolution.width;
+	fse->max_height = info->resolution.height;
+
+	return 0;
+}
+
+static int ap1302_sensor_get_fmt(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_format *fmt)
+{
+	struct ap1302_sensor *sensor = to_ap1302_sensor(sd);
+	const struct ap1302_sensor_info *info = sensor->ap1302->sensor_info;
+
+	memset(&fmt->format, 0, sizeof(fmt->format));
+
+	fmt->format.width = info->resolution.width;
+	fmt->format.height = info->resolution.height;
+	fmt->format.field = V4L2_FIELD_NONE;
+	fmt->format.code = info->format;
+	fmt->format.colorspace = V4L2_COLORSPACE_SRGB;
+
+	return 0;
+}
+
+static const struct v4l2_subdev_pad_ops ap1302_sensor_pad_ops = {
+	.enum_mbus_code = ap1302_sensor_enum_mbus_code,
+	.enum_frame_size = ap1302_sensor_enum_frame_size,
+	.get_fmt = ap1302_sensor_get_fmt,
+	.set_fmt = ap1302_sensor_get_fmt,
+};
+
+static const struct v4l2_subdev_ops ap1302_sensor_subdev_ops = {
+	.pad = &ap1302_sensor_pad_ops,
+};
 
 static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
 				  struct device_node *node)
@@ -1367,6 +1472,7 @@ static void ap1302_sensor_dev_release(struct device *dev)
 static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
 {
 	struct ap1302_device *ap1302 = sensor->ap1302;
+	struct v4l2_subdev *sd = &sensor->sd;
 	unsigned int i;
 	int ret;
 
@@ -1421,6 +1527,24 @@ static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
 		sensor->num_supplies = i;
 	}
 
+	sd->dev = sensor->dev;
+	v4l2_subdev_init(sd, &ap1302_sensor_subdev_ops);
+
+	snprintf(sd->name, sizeof(sd->name), "%s %u",
+		 ap1302->sensor_info->name, index);
+
+	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
+
+	ret = media_entity_pads_init(&sd->entity, 1, &sensor->pad);
+	if (ret < 0) {
+		dev_err(ap1302->dev,
+			"failed to initialize media entity for sensor %u: %d\n",
+			index, ret);
+		goto error;
+	}
+
 	return 0;
 
 error:
@@ -1430,6 +1554,8 @@ error:
 
 static void ap1302_sensor_cleanup(struct ap1302_sensor *sensor)
 {
+	media_entity_cleanup(&sensor->sd.entity);
+
 	if (sensor->num_supplies)
 		regulator_bulk_free(sensor->num_supplies, sensor->supplies);
 
@@ -1714,6 +1840,7 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 	dev_dbg(ap1302->dev, "name %s\n", sd->name);
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
+	sd->internal_ops = &ap1302_subdev_internal_ops;
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	sd->entity.ops = &ap1302_media_ops;
 
