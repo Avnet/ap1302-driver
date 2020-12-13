@@ -394,7 +394,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	}, {
 		.compatible = "onnn,ar1335",
 		.name = "ar1335",
-		.resolution = { 1920, 1080 },
+		.resolution = { 4208, 3120 },
 	},
 };
 
