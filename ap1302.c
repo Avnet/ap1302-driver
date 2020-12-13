@@ -264,6 +264,8 @@
 /* Advanced Slave MIPI Registers */
 #define AP1302_ADV_CAPTURE_A_FV_CNT		AP1302_REG_32BIT(0x00490040)
 
+struct ap1302_device;
+
 enum ap1302_context {
 	AP1302_CTX_PREVIEW = 0,
 	AP1302_CTX_SNAPSHOT = 1,
@@ -288,6 +290,9 @@ struct ap1302_sensor_info {
 };
 
 struct ap1302_sensor {
+	struct ap1302_device *ap1302;
+
+	struct device_node *of_node;
 	struct device *dev;
 	unsigned int num_supplies;
 	struct regulator_bulk_data *supplies;
@@ -1322,6 +1327,122 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 };
 
 /* -----------------------------------------------------------------------------
+ * Sensor
+ */
+
+static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
+				  struct device_node *node)
+{
+	struct ap1302_sensor *sensor;
+	u32 reg;
+	int ret;
+
+	/* Retrieve the sensor index from the reg property. */
+	ret = of_property_read_u32(node, "reg", &reg);
+	if (ret < 0) {
+		dev_warn(ap1302->dev,
+			 "'reg' property missing in sensor node\n");
+		return -EINVAL;
+	}
+
+	if (reg >= ARRAY_SIZE(ap1302->sensors)) {
+		dev_warn(ap1302->dev, "Out-of-bounds 'reg' value %u\n",
+			 reg);
+		return -EINVAL;
+	}
+
+	sensor = &ap1302->sensors[reg];
+	if (sensor->ap1302) {
+		dev_warn(ap1302->dev, "Duplicate entry for sensor %u\n", reg);
+		return -EINVAL;
+	}
+
+	sensor->ap1302 = ap1302;
+	sensor->of_node = of_node_get(node);
+
+	return 0;
+}
+
+static void ap1302_sensor_dev_release(struct device *dev)
+{
+	of_node_put(dev->of_node);
+	kfree(dev);
+}
+
+static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
+{
+	struct ap1302_device *ap1302 = sensor->ap1302;
+	unsigned int i;
+	int ret;
+
+	/*
+	 * Register a device for the sensor, to support usage of the regulator
+	 * API.
+	 */
+	sensor->dev = kzalloc(sizeof(*sensor->dev), GFP_KERNEL);
+	if (!sensor->dev)
+		return -ENOMEM;
+
+	sensor->dev->parent = ap1302->dev;
+	sensor->dev->of_node = of_node_get(sensor->of_node);
+	sensor->dev->release = &ap1302_sensor_dev_release;
+	dev_set_name(sensor->dev, "%s-%s.%u", dev_name(ap1302->dev),
+		     ap1302->sensor_info->name, index);
+
+	ret = device_register(sensor->dev);
+	if (ret < 0) {
+		dev_err(ap1302->dev,
+			"Failed to register device for sensor %u\n", index);
+		goto error;
+	}
+
+	/* Retrieve the power supplies for the sensor, if any. */
+	if (ap1302->sensor_info->supplies) {
+		const char * const *supplies = ap1302->sensor_info->supplies;
+		unsigned int num_supplies;
+
+		for (num_supplies = 0; supplies[num_supplies]; ++num_supplies)
+			;
+
+		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
+						sizeof(*sensor->supplies),
+						GFP_KERNEL);
+		if (!sensor->supplies) {
+			ret = -ENOMEM;
+			goto error;
+		}
+
+		for (i = 0; i < num_supplies; ++i)
+			sensor->supplies[i].supply = supplies[i];
+
+		ret = regulator_bulk_get(sensor->dev, num_supplies,
+					 sensor->supplies);
+		if (ret < 0) {
+			dev_err(ap1302->dev,
+				"Failed to get supplies for sensor %u\n", index);
+			goto error;
+		}
+
+		sensor->num_supplies = i;
+	}
+
+	return 0;
+
+error:
+	put_device(sensor->dev);
+	return ret;
+}
+
+static void ap1302_sensor_cleanup(struct ap1302_sensor *sensor)
+{
+	if (sensor->num_supplies)
+		regulator_bulk_free(sensor->num_supplies, sensor->supplies);
+
+	put_device(sensor->dev);
+	of_node_put(sensor->of_node);
+}
+
+/* -----------------------------------------------------------------------------
  * Boot & Firmware Handling
  */
 
@@ -1633,98 +1754,6 @@ error_media:
 	return ret;
 }
 
-static void ap1302_sensor_dev_release(struct device *dev)
-{
-	kfree(dev);
-}
-
-static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
-				  struct device_node *node)
-{
-	struct ap1302_sensor *sensor;
-	unsigned int i;
-	u32 reg;
-	int ret;
-
-	/* Retrieve the sensor index from the reg property. */
-	ret = of_property_read_u32(node, "reg", &reg);
-	if (ret < 0) {
-		dev_warn(ap1302->dev,
-			 "'reg' property missing in sensor node\n");
-		return -EINVAL;
-	}
-
-	if (reg >= ARRAY_SIZE(ap1302->sensors)) {
-		dev_warn(ap1302->dev, "Out-of-bounds 'reg' value %u\n",
-			 reg);
-		return -EINVAL;
-	}
-
-	sensor = &ap1302->sensors[reg];
-	if (sensor->dev) {
-		dev_warn(ap1302->dev, "Duplicate entry for sensor %u\n", reg);
-		return -EINVAL;
-	}
-
-	/*
-	 * Register a device for the sensor, to support usage of the regulator
-	 * API.
-	 */
-	sensor->dev = kzalloc(sizeof(*sensor->dev), GFP_KERNEL);
-	if (!sensor->dev)
-		return -ENOMEM;
-
-	sensor->dev->parent = ap1302->dev;
-	sensor->dev->of_node = node;
-	sensor->dev->release = &ap1302_sensor_dev_release;
-	dev_set_name(sensor->dev, "%s-%s.%u", dev_name(ap1302->dev),
-		     ap1302->sensor_info->name, reg);
-
-	ret = device_register(sensor->dev);
-	if (ret < 0) {
-		dev_err(ap1302->dev,
-			"Failed to register device for sensor %u\n", reg);
-		goto error;
-	}
-
-	/* Retrieve the power supplies for the sensor, if any. */
-	if (ap1302->sensor_info->supplies) {
-		const char * const *supplies = ap1302->sensor_info->supplies;
-		unsigned int num_supplies;
-
-		for (num_supplies = 0; supplies[num_supplies]; ++num_supplies)
-			;
-
-		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
-						sizeof(*sensor->supplies),
-						GFP_KERNEL);
-		if (!sensor->supplies) {
-			ret = -ENOMEM;
-			goto error;
-		}
-
-		for (i = 0; i < num_supplies; ++i)
-			sensor->supplies[i].supply = supplies[i];
-
-		ret = regulator_bulk_get(sensor->dev, num_supplies,
-					 sensor->supplies);
-		if (ret < 0) {
-			dev_err(ap1302->dev,
-				"Failed to get supplies for sensor %u\n", reg);
-			goto error;
-		}
-
-		sensor->num_supplies = i;
-	}
-
-	return 0;
-
-error:
-	put_device(sensor->dev);
-	sensor->dev = NULL;
-	return ret;
-}
-
 static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
 	struct device_node *sensors;
@@ -1795,7 +1824,7 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 
 	for_each_child_of_node(sensors, node) {
 		if (of_node_name_eq(node, "sensor")) {
-			if (!ap1302_parse_of_sensor(ap1302, node))
+			if (!ap1302_sensor_parse_of(ap1302, node))
 				num_sensors++;
 		}
 	}
@@ -1817,11 +1846,10 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
 		struct ap1302_sensor *sensor = &ap1302->sensors[i];
 
-		if (sensor->num_supplies)
-			regulator_bulk_free(sensor->num_supplies,
-					    sensor->supplies);
+		if (!sensor->ap1302)
+			continue;
 
-		put_device(sensor->dev);
+		ap1302_sensor_cleanup(sensor);
 	}
 
 	mutex_destroy(&ap1302->lock);
@@ -1830,6 +1858,7 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct ap1302_device *ap1302;
+	unsigned int i;
 	int ret;
 
 	ap1302 = devm_kzalloc(&client->dev, sizeof(*ap1302), GFP_KERNEL);
@@ -1860,6 +1889,17 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	ret = ap1302_parse_of(ap1302);
 	if (ret < 0)
 		goto error;
+
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		if (!sensor->ap1302)
+			continue;
+
+		ret = ap1302_sensor_init(sensor, i);
+		if (ret < 0)
+			goto error;
+	}
 
 	ret = ap1302_hw_init(ap1302);
 	if (ret)
