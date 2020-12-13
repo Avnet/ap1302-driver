@@ -398,10 +398,10 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	},
 };
 
-static const struct ap1302_sensor_info ap1302_sensor_info_none = {
+static const struct ap1302_sensor_info ap1302_sensor_info_tpg = {
 	.model = "",
-	.name = "none",
-	.resolution = { 0, 0 },
+	.name = "tpg",
+	.resolution = { 1920, 1080 },
 };
 
 /* -----------------------------------------------------------------------------
@@ -1327,6 +1327,12 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 
 static int ap1302_request_firmware(struct ap1302_device *ap1302)
 {
+	static const char * const suffixes[] = {
+		"",
+		"_single",
+		"_dual",
+	};
+
 	const struct ap1302_firmware_header *fw_hdr;
 	unsigned int num_sensors;
 	unsigned int fw_size;
@@ -1339,9 +1345,8 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 			num_sensors++;
 	}
 
-	ret = snprintf(name, sizeof(name), "ap1302_%s_%s_fw.bin",
-		       ap1302->sensor_info->name,
-		       num_sensors == 2 ? "dual" : "single");
+	ret = snprintf(name, sizeof(name), "ap1302_%s%s_fw.bin",
+		       ap1302->sensor_info->name, suffixes[num_sensors]);
 	if (ret >= sizeof(name)) {
 		dev_err(ap1302->dev, "Firmware name too long\n");
 		return -EINVAL;
@@ -1763,8 +1768,12 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 
 	ret = of_property_read_string(sensors, "onnn,model", &model);
 	if (ret < 0) {
-		dev_err(ap1302->dev, "Sensor model not specified in DT\n");
-		ret = -ENODEV;
+		/*
+		 * If no sensor is connected, we can still support operation
+		 * with the test pattern generator.
+		 */
+		ap1302->sensor_info = &ap1302_sensor_info_tpg;
+		ret = 0;
 		goto done;
 	}
 
