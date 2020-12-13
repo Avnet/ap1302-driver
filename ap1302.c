@@ -281,14 +281,13 @@ struct ap1302_size {
 };
 
 struct ap1302_sensor_info {
-	const char *compatible;
+	const char *model;
 	const char *name;
 	struct ap1302_size resolution;
 	const char * const *supplies;
 };
 
 struct ap1302_sensor {
-	const struct ap1302_sensor_info *info;
 	struct device *dev;
 	unsigned int num_supplies;
 	struct regulator_bulk_data *supplies;
@@ -318,6 +317,7 @@ struct ap1302_device {
 
 	struct v4l2_ctrl_handler ctrls;
 
+	const struct ap1302_sensor_info *sensor_info;
 	struct ap1302_sensor sensors[2];
 };
 
@@ -371,7 +371,7 @@ static const struct ap1302_size ap1302_sizes[] = {
 
 static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	{
-		.compatible = "onnn,ar0144",
+		.model = "onnn,ar0144",
 		.name = "ar0144",
 		.resolution = { 1280, 800 },
 		.supplies = (const char * const[]) {
@@ -381,7 +381,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 			NULL,
 		},
 	}, {
-		.compatible = "onnn,ar0330",
+		.model = "onnn,ar0330",
 		.name = "ar0330",
 		.resolution = { 2304, 1536 },
 		.supplies = (const char * const[]) {
@@ -392,14 +392,14 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 			NULL,
 		},
 	}, {
-		.compatible = "onnn,ar1335",
+		.model = "onnn,ar1335",
 		.name = "ar1335",
 		.resolution = { 4208, 3120 },
 	},
 };
 
 static const struct ap1302_sensor_info ap1302_sensor_info_none = {
-	.compatible = "",
+	.model = "",
 	.name = "none",
 	.resolution = { 0, 0 },
 };
@@ -972,7 +972,7 @@ static int ap1302_init_cfg(struct v4l2_subdev *sd,
 	u32 which = cfg ? V4L2_SUBDEV_FORMAT_TRY : V4L2_SUBDEV_FORMAT_ACTIVE;
 	struct ap1302_device *ap1302 = to_ap1302(sd);
 	const struct ap1302_size *sensor_resolution =
-		&ap1302->sensors[0].info->resolution;
+		&ap1302->sensor_info->resolution;
 	struct v4l2_mbus_framefmt *format;
 	int i;
 
@@ -1027,8 +1027,8 @@ static int ap1302_enum_frame_size(struct v4l2_subdev *sd,
 		return -EINVAL;
 
 	size = &ap1302_sizes[fse->index];
-	if (size->width > ap1302->sensors[0].info->resolution.width ||
-	    size->height > ap1302->sensors[0].info->resolution.height)
+	if (size->width > ap1302->sensor_info->resolution.width ||
+	    size->height > ap1302->sensor_info->resolution.height)
 		return -EINVAL;
 
 	/* Validate the media bus code. */
@@ -1068,7 +1068,7 @@ static void ap1302_find_best_size(struct ap1302_device *ap1302,
 				  u32 *width, u32 *height)
 {
 	const struct ap1302_size *sensor_resolution =
-		&ap1302->sensors[0].info->resolution;
+		&ap1302->sensor_info->resolution;
 	const struct ap1302_size *best_size;
 	unsigned int best_score = UINT_MAX;
 	unsigned int i;
@@ -1328,13 +1328,20 @@ static const struct v4l2_subdev_ops ap1302_subdev_ops = {
 static int ap1302_request_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *fw_hdr;
+	unsigned int num_sensors;
 	unsigned int fw_size;
+	unsigned int i;
 	char name[64];
 	int ret;
 
+	for (i = 0, num_sensors = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		if (ap1302->sensors[i].dev)
+			num_sensors++;
+	}
+
 	ret = snprintf(name, sizeof(name), "ap1302_%s_%s_fw.bin",
-		       ap1302->sensors[0].info->name,
-		       ap1302->sensors[1].info->name);
+		       ap1302->sensor_info->name,
+		       num_sensors == 2 ? "dual" : "single");
 	if (ret >= sizeof(name)) {
 		dev_err(ap1302->dev, "Firmware name too long\n");
 		return -EINVAL;
@@ -1630,15 +1637,11 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 				  struct device_node *node)
 {
 	struct ap1302_sensor *sensor;
-	const char *compat;
 	unsigned int i;
 	u32 reg;
 	int ret;
 
-	/*
-	 * Retrieve the sensor index and model from the reg property and
-	 * compatible properties.
-	 */
+	/* Retrieve the sensor index from the reg property. */
 	ret = of_property_read_u32(node, "reg", &reg);
 	if (ret < 0) {
 		dev_warn(ap1302->dev,
@@ -1653,24 +1656,8 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 	}
 
 	sensor = &ap1302->sensors[reg];
-
-	ret = of_property_read_string(node, "compatible", &compat);
-	if (ret < 0)
-		return 0;
-
-	for (i = 0; i < ARRAY_SIZE(ap1302_sensor_info); ++i) {
-		const struct ap1302_sensor_info *info =
-			&ap1302_sensor_info[i];
-
-		if (!strcmp(info->compatible, compat)) {
-			sensor->info = info;
-			break;
-		}
-	}
-
-	if (sensor->info == &ap1302_sensor_info_none) {
-		dev_warn(ap1302->dev, "Unsupported sensor %s, ignoring\n",
-			 compat);
+	if (sensor->dev) {
+		dev_warn(ap1302->dev, "Duplicate entry for sensor %u\n", reg);
 		return -EINVAL;
 	}
 
@@ -1686,7 +1673,7 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 	sensor->dev->of_node = node;
 	sensor->dev->release = &ap1302_sensor_dev_release;
 	dev_set_name(sensor->dev, "%s-%s.%u", dev_name(ap1302->dev),
-		     sensor->info->name, reg);
+		     ap1302->sensor_info->name, reg);
 
 	ret = device_register(sensor->dev);
 	if (ret < 0) {
@@ -1696,11 +1683,11 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 	}
 
 	/* Retrieve the power supplies for the sensor, if any. */
-	if (sensor->info->supplies) {
+	if (ap1302->sensor_info->supplies) {
+		const char * const *supplies = ap1302->sensor_info->supplies;
 		unsigned int num_supplies;
 
-		for (num_supplies = 0; sensor->info->supplies[num_supplies];
-		     ++num_supplies)
+		for (num_supplies = 0; supplies[num_supplies]; ++num_supplies)
 			;
 
 		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
@@ -1712,7 +1699,7 @@ static int ap1302_parse_of_sensor(struct ap1302_device *ap1302,
 		}
 
 		for (i = 0; i < num_supplies; ++i)
-			sensor->supplies[i].supply = sensor->info->supplies[i];
+			sensor->supplies[i].supply = supplies[i];
 
 		ret = regulator_bulk_get(sensor->dev, num_supplies,
 					 sensor->supplies);
@@ -1737,7 +1724,10 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
 	struct device_node *sensors;
 	struct device_node *node;
+	unsigned int num_sensors = 0;
+	const char *model;
 	unsigned int i;
+	int ret;
 
 	/* Clock */
 	ap1302->clock = devm_clk_get(ap1302->dev, NULL);
@@ -1765,23 +1755,50 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	}
 
 	/* Sensors */
-	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i)
-		ap1302->sensors[i].info = &ap1302_sensor_info_none;
-
 	sensors = of_get_child_by_name(ap1302->dev->of_node, "sensors");
 	if (!sensors) {
 		dev_err(ap1302->dev, "'sensors' child node not found\n");
 		return -EINVAL;
 	}
 
-	for_each_child_of_node(sensors, node) {
-		if (of_node_name_eq(node, "sensor"))
-			ap1302_parse_of_sensor(ap1302, node);
+	ret = of_property_read_string(sensors, "onnn,model", &model);
+	if (ret < 0) {
+		dev_err(ap1302->dev, "Sensor model not specified in DT\n");
+		ret = -ENODEV;
+		goto done;
 	}
 
-	of_node_put(sensors);
+	for (i = 0; i < ARRAY_SIZE(ap1302_sensor_info); ++i) {
+		const struct ap1302_sensor_info *info =
+			&ap1302_sensor_info[i];
 
-	return 0;
+		if (!strcmp(info->model, model)) {
+			ap1302->sensor_info = info;
+			break;
+		}
+	}
+
+	if (!ap1302->sensor_info) {
+		dev_warn(ap1302->dev, "Unsupported sensor model %s\n", model);
+		ret = -EINVAL;
+		goto done;
+	}
+
+	for_each_child_of_node(sensors, node) {
+		if (of_node_name_eq(node, "sensor")) {
+			if (!ap1302_parse_of_sensor(ap1302, node))
+				num_sensors++;
+		}
+	}
+
+	if (!num_sensors) {
+		dev_err(ap1302->dev, "No sensor found\n");
+		ret = -EINVAL;
+	}
+
+done:
+	of_node_put(sensors);
+	return ret;
 }
 
 static void ap1302_cleanup(struct ap1302_device *ap1302)
