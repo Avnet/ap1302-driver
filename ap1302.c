@@ -351,13 +351,18 @@ struct ap1302_size {
 	unsigned int height;
 };
 
+struct ap1302_sensor_supply {
+	const char *name;
+	unsigned int post_delay_us;
+};
+
 struct ap1302_sensor_info {
 	const char *model;
 	const char *name;
 	unsigned int i2c_addr;
 	struct ap1302_size resolution;
 	u32 format;
-	const char * const *supplies;
+	const struct ap1302_sensor_supply *supplies;
 };
 
 struct ap1302_sensor {
@@ -444,11 +449,11 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.i2c_addr = 0x10,
 		.resolution = { 1280, 800 },
 		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
-		.supplies = (const char * const[]) {
-			"vaa",
-			"vddio",
-			"vdd",
-			NULL,
+		.supplies = (const struct ap1302_sensor_supply[]) {
+			{ "vaa", 0 },
+			{ "vddio", 0 },
+			{ "vdd", 0 },
+			{ NULL, 0 },
 		},
 	}, {
 		.model = "onnn,ar0330",
@@ -456,12 +461,12 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.i2c_addr = 0x10,
 		.resolution = { 2304, 1536 },
 		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
-		.supplies = (const char * const[]) {
-			"vddpll",
-			"vaa",
-			"vdd",
-			"vddio",
-			NULL,
+		.supplies = (const struct ap1302_sensor_supply[]) {
+			{ "vddpll", 0 },
+			{ "vaa", 0 },
+			{ "vdd", 0 },
+			{ "vddio", 0 },
+			{ NULL, 0 },
 		},
 	}, {
 		.model = "onnn,ar1335",
@@ -906,30 +911,46 @@ static void ap1302_debugfs_cleanup(struct ap1302_device *ap1302)
 
 static int ap1302_power_on_sensors(struct ap1302_device *ap1302)
 {
-	unsigned int i;
+	struct ap1302_sensor *sensor;
+	unsigned int i, j;
 	int ret;
 
 	if (!ap1302->sensor_info->supplies)
 		return 0;
 
 	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
-		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+		sensor = &ap1302->sensors[i];
+		ret = 0;
 
-		ret = regulator_bulk_enable(sensor->num_supplies,
-					    sensor->supplies);
-		if (ret) {
-			dev_err(ap1302->dev,
-				"Failed to enable supplies for sensor %u\n", i);
-			goto error;
+		for (j = 0; j < sensor->num_supplies; ++j) {
+			unsigned int delay;
+
+			/*
+			 * We can't use regulator_bulk_enable() as it would
+			 * enable all supplies in parallel, breaking the sensor
+			 * power sequencing constraints.
+			 */
+			ret = regulator_enable(sensor->supplies[j].consumer);
+			if (ret < 0) {
+				dev_err(ap1302->dev,
+						"Failed to enable supply %u for sensor %u\n",
+						j, i);
+				goto error;
+			}
+
+			delay = ap1302->sensor_info->supplies[j].post_delay_us;
+			usleep_range(delay, delay + 100);
 		}
 	}
 
 	return 0;
 
 error:
-	for (; i > 0; --i) {
-		struct ap1302_sensor *sensor = &ap1302->sensors[i - 1];
+	for (; j > 0; --j)
+		regulator_disable(sensor->supplies[j - 1].consumer);
 
+	for (; i > 0; --i) {
+		sensor = &ap1302->sensors[i - 1];
 		regulator_bulk_disable(sensor->num_supplies, sensor->supplies);
 	}
 
@@ -1978,10 +1999,11 @@ static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
 
 	/* Retrieve the power supplies for the sensor, if any. */
 	if (ap1302->sensor_info->supplies) {
-		const char * const *supplies = ap1302->sensor_info->supplies;
+		const struct ap1302_sensor_supply *supplies =
+			ap1302->sensor_info->supplies;
 		unsigned int num_supplies;
 
-		for (num_supplies = 0; supplies[num_supplies]; ++num_supplies)
+		for (num_supplies = 0; supplies[num_supplies].name; ++num_supplies)
 			;
 
 		sensor->supplies = devm_kcalloc(ap1302->dev, num_supplies,
@@ -1993,7 +2015,7 @@ static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
 		}
 
 		for (i = 0; i < num_supplies; ++i)
-			sensor->supplies[i].supply = supplies[i];
+			sensor->supplies[i].supply = supplies[i].name;
 
 		ret = regulator_bulk_get(sensor->dev, num_supplies,
 					 sensor->supplies);
