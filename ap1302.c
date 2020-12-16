@@ -267,6 +267,28 @@
 #define AP1302_ADV_IRQ_SYS_INTE_GPIO_PIN	BIT(0)
 
 /* Advanced Slave MIPI Registers */
+#define AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(p, n) \
+	AP1302_REG_32BIT(0x00420008 + (p) * 0x50000 + (n) * 0x20)
+#define AP1302_LANE_ERR_LP_VAL(n)		(((n) >> 30) & 3)
+#define AP1302_LANE_ERR_STATE(n)		(((n) >> 24) & 0xf)
+#define AP1302_LANE_ERR				BIT(18)
+#define AP1302_LANE_ABORT			BIT(17)
+#define AP1302_LANE_LP_VAL(n)			(((n) >> 6) & 3)
+#define AP1302_LANE_STATE(n)			((n) & 0xf)
+#define AP1302_LANE_STATE_STOP_S		0x0
+#define AP1302_LANE_STATE_HS_REQ_S		0x1
+#define AP1302_LANE_STATE_LP_REQ_S		0x2
+#define AP1302_LANE_STATE_HS_S			0x3
+#define AP1302_LANE_STATE_LP_S			0x4
+#define AP1302_LANE_STATE_ESC_REQ_S		0x5
+#define AP1302_LANE_STATE_TURN_REQ_S		0x6
+#define AP1302_LANE_STATE_ESC_S			0x7
+#define AP1302_LANE_STATE_ESC_0			0x8
+#define AP1302_LANE_STATE_ESC_1			0x9
+#define AP1302_LANE_STATE_TURN_S		0xa
+#define AP1302_LANE_STATE_TURN_MARK		0xb
+#define AP1302_LANE_STATE_ERROR_S		0xc
+
 #define AP1302_ADV_CAPTURE_A_FV_CNT		AP1302_REG_32BIT(0x00490040)
 
 struct ap1302_device;
@@ -1227,6 +1249,119 @@ static const char * const ap1302_warnings[] = {
 	"FRAME_LOST",
 };
 
+static const char * const ap1302_lane_states[] = {
+	"stop_s",
+	"hs_req_s",
+	"lp_req_s",
+	"hs_s",
+	"lp_s",
+	"esc_req_s",
+	"turn_req_s",
+	"esc_s",
+	"esc_0",
+	"esc_1",
+	"turn_s",
+	"turn_mark",
+	"error_s",
+};
+
+static void ap1302_log_lane_state(struct ap1302_sensor *sensor,
+				  unsigned int index)
+{
+	static const char *lp_states[] = {
+		"00", "10", "01", "11",
+	};
+
+	unsigned int counts[4][ARRAY_SIZE(ap1302_lane_states)];
+	unsigned int samples = 0;
+	unsigned int lane;
+	unsigned int i;
+	u32 first[4] = { 0, };
+	u32 last[4] = { 0, };
+	int ret;
+
+	memset(counts, 0, sizeof(counts));
+
+	for (i = 0; i < 1000; ++i) {
+		u32 values[4];
+
+		/*
+		 * Read the state of all lanes and skip read errors and invalid
+		 * values.
+		 */
+		for (lane = 0; lane < 4; ++lane) {
+			ret = ap1302_read(sensor->ap1302,
+					  AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
+					  &values[lane]);
+			if (ret < 0)
+				break;
+
+			if (AP1302_LANE_STATE(values[lane]) >=
+			    ARRAY_SIZE(ap1302_lane_states)) {
+				ret = -EINVAL;
+				break;
+			}
+		}
+
+		if (ret < 0)
+			continue;
+
+		/* Accumulate the samples and save the first and last states. */
+		for (lane = 0; lane < 4; ++lane)
+			counts[lane][AP1302_LANE_STATE(values[lane])]++;
+
+		if (!samples)
+			memcpy(first, values, sizeof(first));
+		memcpy(last, values, sizeof(last));
+
+		samples++;
+	}
+
+	if (!samples)
+		return;
+
+	/*
+	 * Print the LP state from the first sample, the error state from the
+	 * last sample, and the states accumulators for each lane.
+	 */
+	for (lane = 0; lane < 4; ++lane) {
+		u32 state = last[lane];
+		char error_msg[25] = "";
+
+		if (state & (AP1302_LANE_ERR | AP1302_LANE_ABORT)) {
+			unsigned int err = AP1302_LANE_ERR_STATE(state);
+			const char *err_state = NULL;
+
+			err_state = err < ARRAY_SIZE(ap1302_lane_states)
+				  ? ap1302_lane_states[err] : "INVALID";
+
+			snprintf(error_msg, sizeof(error_msg), "ERR (%s%s) %s LP%s",
+				 state & AP1302_LANE_ERR ? "E" : "",
+				 state & AP1302_LANE_ABORT ? "A" : "",
+				 err_state,
+				 lp_states[AP1302_LANE_ERR_LP_VAL(state)]);
+		}
+
+		dev_info(sensor->ap1302->dev, "SINF%u L%u state: LP%s %s",
+			 index, lane, lp_states[AP1302_LANE_LP_VAL(first[lane])],
+			 error_msg);
+
+		for (i = 0; i < ARRAY_SIZE(ap1302_lane_states); ++i) {
+			if (counts[lane][i])
+				printk(KERN_CONT " %s:%u",
+				       ap1302_lane_states[i],
+				       counts[lane][i]);
+		}
+		printk(KERN_CONT "\n");
+	}
+
+	/* Reset the error flags. */
+	for (lane = 0; lane < 4; ++lane)
+		ap1302_write(sensor->ap1302,
+			     AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
+			     AP1302_LANE_ERR | AP1302_LANE_ABORT);
+}
+
 static int ap1302_log_status(struct v4l2_subdev *sd)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
@@ -1305,6 +1440,16 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 
 	dev_info(ap1302->dev, "Frame counters: ICP %u, HINF %u, BRAC %u\n",
 		 frame_count_icp, frame_count_hinf, frame_count_brac);
+
+	/* Sample the lane state. */
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[i];
+
+		if (!sensor->ap1302)
+			continue;
+
+		ap1302_log_lane_state(sensor, i);
+	}
 
 	return 0;
 }
