@@ -9,6 +9,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/gpio.h>
@@ -237,6 +238,35 @@
 #define AP1302_SYS_START_GO			BIT(4)
 #define AP1302_SYS_START_PATCH_FUN		BIT(1)
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
+#define AP1302_DMA_SRC				AP1302_REG_32BIT(0x60a0)
+#define AP1302_DMA_DST				AP1302_REG_32BIT(0x60a4)
+#define AP1302_DMA_SIP_SIPM(n)			((n) << 26)
+#define AP1302_DMA_SIP_DATA_16_BIT		BIT(25)
+#define AP1302_DMA_SIP_ADDR_16_BIT		BIT(24)
+#define AP1302_DMA_SIP_ID(n)			((n) << 17)
+#define AP1302_DMA_SIP_REG(n)			((n) << 0)
+#define AP1302_DMA_SIZE				AP1302_REG_32BIT(0x60a8)
+#define AP1302_DMA_CTRL				AP1302_REG_16BIT(0x60ac)
+#define AP1302_DMA_CTRL_SCH_NORMAL		(0 << 12)
+#define AP1302_DMA_CTRL_SCH_NEXT		(1 << 12)
+#define AP1302_DMA_CTRL_SCH_NOW			(2 << 12)
+#define AP1302_DMA_CTRL_DST_REG			(0 << 8)
+#define AP1302_DMA_CTRL_DST_SRAM		(1 << 8)
+#define AP1302_DMA_CTRL_DST_SPI			(2 << 8)
+#define AP1302_DMA_CTRL_DST_SIP			(3 << 8)
+#define AP1302_DMA_CTRL_SRC_REG			(0 << 4)
+#define AP1302_DMA_CTRL_SRC_SRAM		(1 << 4)
+#define AP1302_DMA_CTRL_SRC_SPI			(2 << 4)
+#define AP1302_DMA_CTRL_SRC_SIP			(3 << 4)
+#define AP1302_DMA_CTRL_MODE_32_BIT		BIT(3)
+#define AP1302_DMA_CTRL_MODE_MASK		(7 << 0)
+#define AP1302_DMA_CTRL_MODE_IDLE		(0 << 0)
+#define AP1302_DMA_CTRL_MODE_SET		(1 << 0)
+#define AP1302_DMA_CTRL_MODE_COPY		(2 << 0)
+#define AP1302_DMA_CTRL_MODE_MAP		(3 << 0)
+#define AP1302_DMA_CTRL_MODE_UNPACK		(4 << 0)
+#define AP1302_DMA_CTRL_MODE_OTP_READ		(5 << 0)
+#define AP1302_DMA_CTRL_MODE_SIP_PROBE		(6 << 0)
 
 /* Misc Registers */
 #define AP1302_REG_ADV_START			0xe000
@@ -324,6 +354,7 @@ struct ap1302_size {
 struct ap1302_sensor_info {
 	const char *model;
 	const char *name;
+	unsigned int i2c_addr;
 	struct ap1302_size resolution;
 	u32 format;
 	const char * const *supplies;
@@ -331,6 +362,7 @@ struct ap1302_sensor_info {
 
 struct ap1302_sensor {
 	struct ap1302_device *ap1302;
+	unsigned int index;
 
 	struct device_node *of_node;
 	struct device *dev;
@@ -370,6 +402,11 @@ struct ap1302_device {
 
 	const struct ap1302_sensor_info *sensor_info;
 	struct ap1302_sensor sensors[2];
+	struct {
+		struct dentry *dir;
+		struct mutex lock;
+		u32 sipm_addr;
+	} debugfs;
 };
 
 static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
@@ -404,6 +441,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	{
 		.model = "onnn,ar0144",
 		.name = "ar0144",
+		.i2c_addr = 0x10,
 		.resolution = { 1280, 800 },
 		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
 		.supplies = (const char * const[]) {
@@ -415,6 +453,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	}, {
 		.model = "onnn,ar0330",
 		.name = "ar0330",
+		.i2c_addr = 0x10,
 		.resolution = { 2304, 1536 },
 		.format = MEDIA_BUS_FMT_SGRBG12_1X12,
 		.supplies = (const char * const[]) {
@@ -427,6 +466,7 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 	}, {
 		.model = "onnn,ar1335",
 		.name = "ar1335",
+		.i2c_addr = 0x36,
 		.resolution = { 4208, 3120 },
 		.format = MEDIA_BUS_FMT_SGRBG10_1X10,
 	},
@@ -572,6 +612,292 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 	}
 
 	return __ap1302_read(ap1302, reg, val);
+}
+
+/* -----------------------------------------------------------------------------
+ * Sensor Registers Access
+ *
+ * Read and write sensor registers through the AP1302 DMA interface.
+ */
+
+static int ap1302_dma_wait_idle(struct ap1302_device *ap1302)
+{
+	unsigned int i;
+	u32 ctrl;
+	int ret;
+
+	for (i = 50; i > 0; i--) {
+		ret = ap1302_read(ap1302, AP1302_DMA_CTRL, &ctrl);
+		if (ret < 0)
+			return ret;
+
+		if ((ctrl & AP1302_DMA_CTRL_MODE_MASK) ==
+		    AP1302_DMA_CTRL_MODE_IDLE)
+			break;
+
+		usleep_range(1000, 1500);
+	}
+
+	if (!i) {
+		dev_err(ap1302->dev, "DMA timeout\n");
+		return -ETIMEDOUT;
+	}
+
+	return 0;
+}
+
+static int ap1302_sipm_read(struct ap1302_device *ap1302, unsigned int port,
+			    u32 reg, u32 *val)
+{
+	unsigned int size = AP1302_REG_SIZE(reg);
+	u32 src;
+	int ret;
+
+	if (size > 2)
+		return -EINVAL;
+
+	ret = ap1302_dma_wait_idle(ap1302);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write(ap1302, AP1302_DMA_SIZE, size);
+	if (ret < 0)
+		return ret;
+
+	src = AP1302_DMA_SIP_SIPM(port)
+	    | (size == 2 ? AP1302_DMA_SIP_DATA_16_BIT : 0)
+	    | AP1302_DMA_SIP_ADDR_16_BIT
+	    | AP1302_DMA_SIP_ID(ap1302->sensor_info->i2c_addr)
+	    | AP1302_DMA_SIP_REG(AP1302_REG_ADDR(reg));
+	ret = ap1302_write(ap1302, AP1302_DMA_SRC, src);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Use the AP1302_DMA_DST register as both the destination address, and
+	 * the scratch pad to store the read value.
+	 */
+	ret = ap1302_write(ap1302, AP1302_DMA_DST,
+			   AP1302_REG_ADDR(AP1302_DMA_DST));
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write(ap1302, AP1302_DMA_CTRL,
+			   AP1302_DMA_CTRL_SCH_NORMAL |
+			   AP1302_DMA_CTRL_DST_REG |
+			   AP1302_DMA_CTRL_SRC_SIP |
+			   AP1302_DMA_CTRL_MODE_COPY);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_dma_wait_idle(ap1302);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_read(ap1302, AP1302_DMA_DST, val);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * The value is stored in big-endian at the DMA_DST address. The regmap
+	 * uses big-endian, so 8-bit values are stored in bits 31:24 and 16-bit
+	 * values in bits 23:16.
+	 */
+	*val >>= 32 - size * 8;
+
+	return 0;
+}
+
+static int ap1302_sipm_write(struct ap1302_device *ap1302, unsigned int port,
+			     u32 reg, u32 val)
+{
+	unsigned int size = AP1302_REG_SIZE(reg);
+	u32 dst;
+	int ret;
+
+	if (size > 2)
+		return -EINVAL;
+
+	ret = ap1302_dma_wait_idle(ap1302);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write(ap1302, AP1302_DMA_SIZE, size);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Use the AP1302_DMA_SRC register as both the source address, and the
+	 * scratch pad to store the write value.
+	 *
+	 * As the AP1302 uses big endian, to store the value at address DMA_SRC
+	 * it must be written in the high order bits of the registers. However,
+	 * 8-bit values seem to be incorrectly handled by the AP1302, which
+	 * expects them to be stored at DMA_SRC + 1 instead of DMA_SRC. The
+	 * value is thus unconditionally shifted by 16 bits, unlike for DMA
+	 * reads.
+	 */
+	ret = ap1302_write(ap1302, AP1302_DMA_SRC,
+			   (val << 16) | AP1302_REG_ADDR(AP1302_DMA_SRC));
+	if (ret < 0)
+		return ret;
+
+	dst = AP1302_DMA_SIP_SIPM(port)
+	    | (size == 2 ? AP1302_DMA_SIP_DATA_16_BIT : 0)
+	    | AP1302_DMA_SIP_ADDR_16_BIT
+	    | AP1302_DMA_SIP_ID(ap1302->sensor_info->i2c_addr)
+	    | AP1302_DMA_SIP_REG(AP1302_REG_ADDR(reg));
+	ret = ap1302_write(ap1302, AP1302_DMA_DST, dst);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_write(ap1302, AP1302_DMA_CTRL,
+			   AP1302_DMA_CTRL_SCH_NORMAL |
+			   AP1302_DMA_CTRL_DST_SIP |
+			   AP1302_DMA_CTRL_SRC_REG |
+			   AP1302_DMA_CTRL_MODE_COPY);
+	if (ret < 0)
+		return ret;
+
+	ret = ap1302_dma_wait_idle(ap1302);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Debugfs
+ */
+
+static int ap1302_sipm_addr_get(void *arg, u64 *val)
+{
+	struct ap1302_device *ap1302 = arg;
+
+	mutex_lock(&ap1302->debugfs.lock);
+	*val = ap1302->debugfs.sipm_addr;
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return 0;
+}
+
+static int ap1302_sipm_addr_set(void *arg, u64 val)
+{
+	struct ap1302_device *ap1302 = arg;
+
+	if (val & ~0x8700ffff)
+		return -EINVAL;
+
+	switch ((val >> 24) & 7) {
+	case 1:
+	case 2:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	mutex_lock(&ap1302->debugfs.lock);
+	ap1302->debugfs.sipm_addr = val;
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return 0;
+}
+
+static int ap1302_sipm_data_get(void *arg, u64 *val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 value;
+	u32 addr;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+
+	addr = ap1302->debugfs.sipm_addr;
+	if (!addr) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	ret = ap1302_sipm_read(ap1302, addr >> 30, addr & ~BIT(31),
+			       &value);
+	if (!ret)
+		*val = value;
+
+unlock:
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
+static int ap1302_sipm_data_set(void *arg, u64 val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 addr;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+
+	addr = ap1302->debugfs.sipm_addr;
+	if (!addr) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	ret = ap1302_sipm_write(ap1302, addr >> 30, addr & ~BIT(31),
+				val);
+
+unlock:
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
+/*
+ * The sipm_addr and sipm_data attributes expose access to the sensor I2C bus.
+ *
+ * To read or write a register, sipm_addr has to first be written with the
+ * register address. The address is a 32-bit integer formatted as follows.
+ *
+ * I000 0SSS 0000 0000 RRRR RRRR RRRR RRRR
+ *
+ * I: SIPM index (0 or 1)
+ * S: Size (1: 8-bit, 2: 16-bit)
+ * R: Register address (16-bit)
+ *
+ * The sipm_data attribute can then be read to read the register value, or
+ * written to write it.
+ */
+
+DEFINE_DEBUGFS_ATTRIBUTE(ap1302_sipm_addr_fops, ap1302_sipm_addr_get,
+			 ap1302_sipm_addr_set, "0x%08llx\n");
+DEFINE_DEBUGFS_ATTRIBUTE(ap1302_sipm_data_fops, ap1302_sipm_data_get,
+			 ap1302_sipm_data_set, "0x%08llx\n");
+
+static void ap1302_debugfs_init(struct ap1302_device *ap1302)
+{
+	struct dentry *dir;
+	char name[16];
+
+	mutex_init(&ap1302->debugfs.lock);
+
+	snprintf(name, sizeof(name), "ap1302.%s", dev_name(ap1302->dev));
+
+	dir = debugfs_create_dir(name, NULL);
+	if (IS_ERR(dir))
+		return;
+
+	ap1302->debugfs.dir = dir;
+
+	debugfs_create_file_unsafe("sipm_addr", 0600, ap1302->debugfs.dir,
+				   ap1302, &ap1302_sipm_addr_fops);
+	debugfs_create_file_unsafe("sipm_data", 0600, ap1302->debugfs.dir,
+				   ap1302, &ap1302_sipm_data_fops);
+}
+
+static void ap1302_debugfs_cleanup(struct ap1302_device *ap1302)
+{
+	debugfs_remove_recursive(ap1302->debugfs.dir);
+	mutex_destroy(&ap1302->debugfs.lock);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1627,6 +1953,8 @@ static int ap1302_sensor_init(struct ap1302_sensor *sensor, unsigned int index)
 	unsigned int i;
 	int ret;
 
+	sensor->index = index;
+
 	/*
 	 * Register a device for the sensor, to support usage of the regulator
 	 * API.
@@ -2187,6 +2515,8 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	if (ret)
 		goto error;
 
+	ap1302_debugfs_init(ap1302);
+
 	ret = ap1302_config_v4l2(ap1302);
 	if (ret)
 		goto error_hw_cleanup;
@@ -2204,6 +2534,8 @@ static int ap1302_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	ap1302_debugfs_cleanup(ap1302);
 
 	ap1302_hw_cleanup(ap1302);
 
