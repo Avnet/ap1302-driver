@@ -538,7 +538,8 @@ static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val)
 
 	if (page) {
 		if (ap1302->reg_page != page) {
-			ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, page);
+			ret = __ap1302_write(ap1302, AP1302_ADVANCED_BASE,
+					     page);
 			if (ret < 0)
 				return ret;
 
@@ -605,7 +606,8 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 
 	if (page) {
 		if (ap1302->reg_page != page) {
-			ret = ap1302_write(ap1302, AP1302_ADVANCED_BASE, page);
+			ret = __ap1302_write(ap1302, AP1302_ADVANCED_BASE,
+					     page);
 			if (ret < 0)
 				return ret;
 
