@@ -24,6 +24,7 @@
 #include <media/media-entity.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-fwnode.h>
 
 #define DRIVER_NAME "ap1302"
 
@@ -395,6 +396,8 @@ struct ap1302_device {
 	u32 reg_page;
 
 	const struct firmware *fw;
+	
+	struct v4l2_fwnode_endpoint bus_cfg;
 
 	struct mutex lock;	/* Protects formats */
 
@@ -1079,7 +1082,12 @@ done:
 static int ap1302_configure(struct ap1302_device *ap1302)
 {
 	const struct ap1302_format *format = &ap1302->formats[AP1302_PAD_SOURCE];
+	unsigned int data_lanes = ap1302->bus_cfg.bus.mipi_csi2.num_data_lanes;
 	int ret = 0;
+
+	ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_HINF_CTRL,
+			 AP1302_CTX_HINF_CTRL_SPOOF |
+			 AP1302_CTX_HINF_CTRL_MIPI_LANES(data_lanes), &ret);
 
 	ap1302_write_ctx(ap1302, AP1302_CTX_PREVIEW, AP1302_CTX_WIDTH,
 			 format->format.width / ap1302->width_factor, &ret);
@@ -2379,6 +2387,7 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 {
 	struct device_node *sensors;
 	struct device_node *node;
+	struct fwnode_handle *ep;
 	unsigned int num_sensors = 0;
 	const char *model;
 	unsigned int i;
@@ -2407,6 +2416,19 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev, "Can't get standby GPIO: %ld\n",
 			PTR_ERR(ap1302->standby_gpio));
 		return PTR_ERR(ap1302->standby_gpio);
+	}
+
+	/* Bus configuration */
+	ep = fwnode_graph_get_next_endpoint(dev_fwnode(ap1302->dev), NULL);
+	if (!ep)
+		return -EINVAL;
+
+	ap1302->bus_cfg.bus_type = V4L2_MBUS_CSI2_DPHY;
+
+	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &ap1302->bus_cfg);
+	if (ret < 0) {
+		dev_err(ap1302->dev, "Failed to parse bus configuration\n");
+		return ret;
 	}
 
 	/* Sensors */
@@ -2476,6 +2498,8 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 
 		ap1302_sensor_cleanup(sensor);
 	}
+
+	v4l2_fwnode_endpoint_free(&ap1302->bus_cfg);
 
 	mutex_destroy(&ap1302->lock);
 }
