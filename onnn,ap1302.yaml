@@ -41,17 +41,16 @@ properties:
     maxItems: 1
 
   port:
-    type: object
+    $ref: /schemas/graph.yaml#/$defs/port-base
+    unevaluatedProperties: false
     description: MIPI CSI-2 output interface to the host.
 
     properties:
       endpoint:
-        type: object
+        $ref: /schemas/graph.yaml#/$defs/endpoint-base
+        unevaluatedProperties: false
 
         properties:
-          remote-endpoint:
-            description: phandle to the CSI-2 receiver input port.
-
           clock-noncontinuous:
             type: boolean
 
@@ -70,11 +69,6 @@ properties:
 
         required:
           - data-lanes
-          - remote-endpoint
-
-        additionalProperties: false
-
-    additionalProperties: false
 
   sensors:
     type: object
