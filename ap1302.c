@@ -1524,6 +1524,31 @@ static int ap1302_set_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int ap1302_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_selection *sel)
+{
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	const struct ap1302_size *resolution = &ap1302->sensor_info->resolution;
+
+	switch (sel->target) {
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP:
+		sel->r.left = 0;
+		sel->r.top = 0;
+		sel->r.width = resolution->width;
+		sel->r.height = resolution->height;
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
@@ -1841,6 +1866,8 @@ static const struct v4l2_subdev_pad_ops ap1302_pad_ops = {
 	.enum_frame_size = ap1302_enum_frame_size,
 	.get_fmt = ap1302_get_fmt,
 	.set_fmt = ap1302_set_fmt,
+	.get_selection = ap1302_get_selection,
+	.set_selection = ap1302_get_selection,
 };
 
 static const struct v4l2_subdev_video_ops ap1302_video_ops = {
