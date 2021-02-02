@@ -2607,7 +2607,7 @@ static int ap1302_remove(struct i2c_client *client)
 
 	release_firmware(ap1302->fw);
 
-	v4l2_device_unregister_subdev(sd);
+	v4l2_async_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
 
 	ap1302_ctrls_cleanup(ap1302);
