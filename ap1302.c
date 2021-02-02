@@ -1281,7 +1281,7 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.id = V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE,
 		.min = 0,
 		.max = 9,
-		.def = 0,
+		.def = 1,
 	}, {
 		.ops = &ap1302_ctrl_ops,
 		.id = V4L2_CID_ZOOM_ABSOLUTE,
