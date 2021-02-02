@@ -477,6 +477,12 @@ static const struct ap1302_sensor_info ap1302_sensor_info[] = {
 		.i2c_addr = 0x36,
 		.resolution = { 4208, 3120 },
 		.format = MEDIA_BUS_FMT_SGRBG10_1X10,
+		.supplies = (const struct ap1302_sensor_supply[]) {
+			{ "vaa", 0 },
+			{ "vddio", 0 },
+			{ "vdd", 0 },
+			{ NULL, 0 },
+		},
 	},
 };
 
