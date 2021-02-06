@@ -1380,11 +1380,14 @@ static int ap1302_init_cfg(struct v4l2_subdev *sd,
 		 * The source pad combines images side by side in multi-sensor
 		 * setup.
 		 */
-		if (pad == AP1302_PAD_SOURCE)
+		if (pad == AP1302_PAD_SOURCE) {
 			format->width *= ap1302->width_factor;
+			format->code = ap1302->formats[pad].info->code;
+		} else {
+			format->code = info->format;
+		}
 
 		format->field = V4L2_FIELD_NONE;
-		format->code = ap1302->formats[pad].info->code;
 		format->colorspace = V4L2_COLORSPACE_SRGB;
 	}
 
