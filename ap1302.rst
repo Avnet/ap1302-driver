@@ -12,11 +12,6 @@ The driver will load the firmware corresponding to the camera sensor
 model configured in the device tree. Then it will configure a v4l
 subsystem with one source pad and a fixed resolution.
 
-Limitations
------------
-The resolution cannot be changed and depends on the firmware loaded.
-So far, very few v4l operations are supported by the driver.
-
 ap1302 with Ultra96v2
 ---------------------
 
