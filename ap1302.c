@@ -393,6 +393,7 @@ struct ap1302_device {
 	struct regmap *regmap32;
 	u32 reg_page;
 
+	const char *fw_name;
 	const struct firmware *fw;
 	
 	struct v4l2_fwnode_endpoint bus_cfg;
@@ -2099,23 +2100,30 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	unsigned int fw_size;
 	unsigned int i;
 	char name[64];
+	const char *fwname;
 	int ret;
 
-	for (i = 0, num_sensors = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
-		if (ap1302->sensors[i].dev)
-			num_sensors++;
+	if (ap1302->fw_name)
+		fwname = ap1302->fw_name;
+	else {
+		for (i = 0, num_sensors = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+			if (ap1302->sensors[i].dev)
+				num_sensors++;
+		}
+
+		ret = snprintf(name, sizeof(name), "ap1302_%s%s_fw.bin",
+			       ap1302->sensor_info->name, suffixes[num_sensors]);
+		if (ret >= sizeof(name)) {
+			dev_err(ap1302->dev, "Firmware name too long\n");
+			return -EINVAL;
+		}
+
+		fwname = name;
 	}
 
-	ret = snprintf(name, sizeof(name), "ap1302_%s%s_fw.bin",
-		       ap1302->sensor_info->name, suffixes[num_sensors]);
-	if (ret >= sizeof(name)) {
-		dev_err(ap1302->dev, "Firmware name too long\n");
-		return -EINVAL;
-	}
+	dev_info(ap1302->dev, "Requesting firmware %s\n", fwname);
 
-	dev_dbg(ap1302->dev, "Requesting firmware %s\n", name);
-
-	ret = request_firmware(&ap1302->fw, name, ap1302->dev);
+	ret = request_firmware(&ap1302->fw, fwname, ap1302->dev);
 	if (ret) {
 		dev_err(ap1302->dev, "Failed to request firmware: %d\n", ret);
 		return ret;
@@ -2434,6 +2442,10 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 			PTR_ERR(ap1302->standby_gpio));
 		return PTR_ERR(ap1302->standby_gpio);
 	}
+
+	/* Reading firmware-name if provided */
+	of_property_read_string(ap1302->dev->of_node, "fw-name",
+				&ap1302->fw_name);
 
 	/* Bus configuration */
 	ep = fwnode_graph_get_next_endpoint(dev_fwnode(ap1302->dev), NULL);
