@@ -467,11 +467,14 @@ static const struct ap1302_format_info supported_video_formats[] = {
 		.code = MEDIA_BUS_FMT_UYYVYY8_0_5X24,
 		.out_fmt = AP1302_PREVIEW_OUT_FMT_FT_YUV_JFIF
 			 | AP1302_PREVIEW_OUT_FMT_FST_YUV_420,
-	}, {
+	},
+#if 0 // MEDIA_BUS_FMT_VYYUYY8_1X24 for Xilinx only ?
+	{
 		.code = MEDIA_BUS_FMT_VYYUYY8_1X24,
 		.out_fmt = AP1302_PREVIEW_OUT_FMT_FT_YUV_JFIF
 			 | AP1302_PREVIEW_OUT_FMT_FST_YUV_420,
 	},
+#endif
 };
 
 /* -----------------------------------------------------------------------------
@@ -2648,7 +2651,8 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 	sd->internal_ops = &ap1302_subdev_internal_ops;
-	sd->entity.function = MEDIA_ENT_F_PROC_VIDEO_ISP;
+	// MEDIA_ENT_F_CAM_SENSOR : MEDIA_ENT_F_PROC_VIDEO_ISP not defined yet
+	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	sd->entity.ops = &ap1302_media_ops;
 
 	for (i = 0; i < ARRAY_SIZE(ap1302->pads); ++i)
