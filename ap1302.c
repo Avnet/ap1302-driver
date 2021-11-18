@@ -2078,7 +2078,7 @@ static void ap1302_sensor_cleanup(struct ap1302_sensor *sensor)
 	if (sensor->num_supplies)
 		regulator_bulk_free(sensor->num_supplies, sensor->supplies);
 
-	put_device(sensor->dev);
+	device_unregister(sensor->dev);
 	of_node_put(sensor->of_node);
 }
 
