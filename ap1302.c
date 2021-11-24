@@ -57,6 +57,10 @@
 #define AP1302_CON_BUF_SIZE			512
 
 /* Control Registers */
+#define AP1302_ORIENTATION			AP1302_REG_16BIT(0x100C)
+#define AP1302_ORIENTATION_HFLIP	(1U << 0)
+#define AP1302_ORIENTATION_VFLIP	(1U << 1)
+#define AP1302_ORIENTATION_3DPATH	(1U << 2)
 #define AP1302_DZ_TGT_FCT			AP1302_REG_16BIT(0x1010)
 #define AP1302_SFX_MODE				AP1302_REG_16BIT(0x1016)
 #define AP1302_SFX_MODE_SFX_NORMAL		(0U << 0)
@@ -186,6 +190,8 @@
 #define AP1302_AE_MANUAL_GAIN		AP1302_REG_16BIT(0x5006)
 #define AP1302_AE_BV_OFF			AP1302_REG_16BIT(0x5014)
 #define AP1302_AE_MET				AP1302_REG_16BIT(0x503E)
+#define AP1302_AF_CTRL				AP1302_REG_16BIT(0x5058)
+#define AP1302_AF_CTRL_MODE_MASK		0x000f
 #define AP1302_AWB_CTRL				AP1302_REG_16BIT(0x5100)
 #define AP1302_AWB_CTRL_RECALC			BIT(13)
 #define AP1302_AWB_CTRL_POSTGAIN		BIT(12)
@@ -354,6 +360,14 @@
 #define AP1302_TCLK_POST_SHIFT			0x0
 #define AP1302_TCLK_PRE_MASK			0xFF00
 #define AP1302_TCLK_PRE_SHIFT			0x8
+
+
+// TODO This should go in v4l2-controls.h after V4L2_CID_USER_IMX_BASE
+/* The base for the AP1302 driver controls.
+ * We reserve 32 controls for this driver. */
+#define V4L2_CID_USER_AP1302_BASE			(V4L2_CID_USER_BASE + 0x10c0)
+
+#define V4L2_CID_AP1302_3D_PATH				(V4L2_CID_USER_AP1302_BASE + 0)
 
 struct ap1302_device;
 
@@ -1339,6 +1353,36 @@ static int ap1302_set_gain(struct ap1302_device *ap1302, s32 val)
 	return ap1302_write(ap1302, AP1302_AE_MANUAL_GAIN, val, NULL);
 }
 
+static int ap1302_set_hflip(struct ap1302_device *ap1302, s32 flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_HFLIP;
+	val |= flip?AP1302_ORIENTATION_HFLIP:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
+static int ap1302_set_vflip(struct ap1302_device *ap1302, s32 flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_VFLIP;
+	val |= flip?AP1302_ORIENTATION_VFLIP:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
 static int ap1302_set_contrast(struct ap1302_device *ap1302, s32 val)
 {
 	return ap1302_write(ap1302, AP1302_CONTRAST, val, NULL);
@@ -1425,6 +1469,37 @@ static int ap1302_set_flicker_freq(struct ap1302_device *ap1302, s32 val)
 			    ap1302_flicker_values[val], NULL);
 }
 
+static int ap1302_set_auto_focus(struct ap1302_device *ap1302, s32 mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_AF_CTRL_MODE_MASK;
+	if (mode)
+		val |= 0x6;
+
+	return ap1302_write(ap1302, AP1302_AF_CTRL, val, NULL);
+}
+
+static int ap1302_set_3d_path(struct ap1302_device *ap1302, s32 path)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_3DPATH;
+	val |= path?AP1302_ORIENTATION_3DPATH:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
 static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ap1302_device *ap1302 =
@@ -1442,6 +1517,12 @@ static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_GAIN:
 		return ap1302_set_gain(ap1302, ctrl->val);
+
+	case V4L2_CID_HFLIP:
+		return ap1302_set_hflip(ap1302, ctrl->val);
+
+	case V4L2_CID_VFLIP:
+		return ap1302_set_vflip(ap1302, ctrl->val);
 
 	case V4L2_CID_GAMMA:
 		return ap1302_set_gamma(ap1302, ctrl->val);
@@ -1466,6 +1547,12 @@ static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_POWER_LINE_FREQUENCY:
 		return ap1302_set_flicker_freq(ap1302, ctrl->val);
+
+	case V4L2_CID_FOCUS_AUTO:
+		return ap1302_set_auto_focus(ap1302, ctrl->val);
+
+	case V4L2_CID_AP1302_3D_PATH:
+		return ap1302_set_3d_path(ap1302, ctrl->val);
 
 	default:
 		return -EINVAL;
@@ -1548,6 +1635,24 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.def = 0x100,
 	}, {
 		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_HFLIP,
+		.name = "HFlip",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_VFLIP,
+		.name = "VFlip",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
 		.id = V4L2_CID_ZOOM_ABSOLUTE,
 		.min = 0x0100,
 		.max = 0x1000,
@@ -1573,6 +1678,24 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.min = 0,
 		.max = 3,
 		.def = 3,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_FOCUS_AUTO,
+		.name = "Auto Focus",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_AP1302_3D_PATH,
+		.name = "3D Path",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
 	},
 };
 
