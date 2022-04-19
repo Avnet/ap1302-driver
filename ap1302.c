@@ -1578,7 +1578,7 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.min = 0x0,
 		.max = 0xFFFF,
 		.step = 0x100,
-		.def = 0x1000,
+		.def = 0x0, // 0: sRGB
 	}, {
 		.ops = &ap1302_ctrl_ops,
 		.id = V4L2_CID_CONTRAST,
