@@ -465,7 +465,12 @@ static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
 	return container_of(sd, struct ap1302_device, sd);
 }
 
+#define FW_MAGIC 0x33315041
+
 struct ap1302_firmware_header {
+	u32 magic;
+	u32 version;
+	char desc[256];
 	u16 pll_init_size;
 	u16 crc;
 } __packed;
@@ -2537,6 +2542,17 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	 * the firmware is valid.
 	 */
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
+
+	if (fw_hdr->magic != FW_MAGIC)
+	{
+		dev_err(ap1302->dev,
+			"Invalid firmware magic: %08x != %08x\n",fw_hdr->magic,FW_MAGIC);
+		return -EINVAL;
+	}
+
+	dev_info(ap1302->dev,"Firmware header version : %d\n",fw_hdr->version);
+	dev_info(ap1302->dev,"Firmware description : %s\n",fw_hdr->desc);
+
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
 	if (fw_hdr->pll_init_size > fw_size) {
