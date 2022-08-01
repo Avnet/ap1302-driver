@@ -475,6 +475,12 @@ struct ap1302_firmware_header {
 	u16 crc;
 } __packed;
 
+/**
+ * Allows specifying a firmware file when loading the module
+ */
+static char *fw_name_param=NULL;
+module_param_named(fw, fw_name_param, charp, 0444);
+
 #define MAX_FW_LOAD_RETRIES 3
 
 static const struct ap1302_format_info supported_video_formats[] = {
@@ -2527,7 +2533,15 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 		return -EINVAL;
 	}
 
-	dev_dbg(ap1302->dev, "Requesting firmware %s\n", name);
+	if (fw_name_param!=NULL) {
+		ret = snprintf(name, sizeof(name), "%s",fw_name_param);
+		if (ret >= sizeof(name)) {
+			dev_err(ap1302->dev, "Firmware name too long\n");
+			return -EINVAL;
+		}
+	}
+
+	dev_info(ap1302->dev, "Requesting firmware %s\n", name);
 
 	ret = request_firmware(&ap1302->fw, name, ap1302->dev);
 	if (ret) {
