@@ -437,6 +437,7 @@ struct ap1302_device {
 
 	struct gpio_desc *reset_gpio;
 	struct gpio_desc *standby_gpio;
+	struct regulator *vcc_supply;
 	struct clk *clock;
 	struct regmap *regmap16;
 	struct regmap *regmap32;
@@ -1131,7 +1132,12 @@ static int ap1302_power_on(struct ap1302_device *ap1302)
 		usleep_range(200, 1000);
 	}
 
-	/* 2. Power up the regulators. To be implemented. */
+	/* 2. Power up the regulators. */
+	if (ap1302->vcc_supply)
+	{
+		regulator_enable(ap1302->vcc_supply);
+		usleep_range(200, 1000);
+	}
 
 	/* 3. De-assert STANDBY. */
 	if (ap1302->standby_gpio) {
@@ -1145,6 +1151,8 @@ static int ap1302_power_on(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev, "Failed to enable clock: %d\n", ret);
 		return ret;
 	}
+	/* Allow clock to setup */
+	usleep_range(200, 1000);
 
 	/* 5. De-assert RESET. */
 	gpiod_set_value(ap1302->reset_gpio, 0);
@@ -1163,6 +1171,9 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 	/* 1. Assert RESET. */
 	gpiod_set_value(ap1302->reset_gpio, 1);
 
+	/* Allow Reset to occur */
+	usleep_range(200, 1000);
+
 	/* 2. Turn the clock off. */
 	clk_disable_unprepare(ap1302->clock);
 
@@ -1172,7 +1183,12 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 		usleep_range(200, 1000);
 	}
 
-	/* 4. Power down the regulators. To be implemented. */
+	/* 4. Power down the regulators. */
+	if (ap1302->vcc_supply)
+	{
+		regulator_disable(ap1302->vcc_supply);
+		usleep_range(200, 1000);
+	}
 
 	/* 5. De-assert STANDBY. */
 	if (ap1302->standby_gpio) {
@@ -2917,6 +2933,21 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev, "Can't get standby GPIO: %ld\n",
 			PTR_ERR(ap1302->standby_gpio));
 		return PTR_ERR(ap1302->standby_gpio);
+	}
+
+	ap1302->vcc_supply = devm_regulator_get_optional(ap1302->dev, "vcc");
+	if (IS_ERR(ap1302->vcc_supply)) {
+		if (PTR_ERR(ap1302->vcc_supply) == -ENODEV)
+		{
+			dev_warn(ap1302->dev,"vcc supply not found\n");
+			ap1302->vcc_supply=NULL;
+		}
+		else
+		{
+			dev_err(ap1302->dev, "Can't get vcc supply: %ld\n",
+				PTR_ERR(ap1302->vcc_supply));
+			return PTR_ERR(ap1302->vcc_supply);
+		}
 	}
 
 	/* Bus configuration */
