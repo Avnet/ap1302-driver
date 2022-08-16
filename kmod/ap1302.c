@@ -268,6 +268,10 @@
 #define AP1302_SYS_START_GO			BIT(4)
 #define AP1302_SYS_START_PATCH_FUN		BIT(1)
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
+#define AP1302_SYSTEM_FREQ_IN			AP1302_REG_32BIT(0x6024)
+#define AP1302_SYSTEM_FREQ_IN_MHZ(x)		((x)<<16)
+#define AP1302_HINF_MIPI_FREQ_TGT		AP1302_REG_32BIT(0x6034)
+#define AP1302_HINF_MIPI_FREQ_TGT_MHZ(x)	((x)<<16)
 #define AP1302_DMA_SRC				AP1302_REG_32BIT(0x60a0)
 #define AP1302_DMA_DST				AP1302_REG_32BIT(0x60a4)
 #define AP1302_DMA_SIP_SIPM(n)			((n) << 26)
@@ -297,6 +301,8 @@
 #define AP1302_DMA_CTRL_MODE_UNPACK		(4 << 0)
 #define AP1302_DMA_CTRL_MODE_OTP_READ		(5 << 0)
 #define AP1302_DMA_CTRL_MODE_SIP_PROBE		(6 << 0)
+
+#define AP1302_BOOTDATA_CHECKSUM		AP1302_REG_16BIT(0x6134)
 
 #define AP1302_BRIGHTNESS			AP1302_REG_16BIT(0x7000)
 #define AP1302_CONTRAST			AP1302_REG_16BIT(0x7002)
@@ -1198,16 +1204,13 @@ static int ap1302_dump_console(struct ap1302_device *ap1302)
 		goto done;
 	}
 
-	print_hex_dump(KERN_INFO, "console ", DUMP_PREFIX_OFFSET, 16, 1, buffer,
-		       AP1302_CON_BUF_SIZE, true);
-
 	buffer[AP1302_CON_BUF_SIZE] = '\0';
 
 	for (p = buffer; p < buffer + AP1302_CON_BUF_SIZE && *p; p = endp + 1) {
 		endp = strchrnul(p, '\n');
 		*endp = '\0';
 
-		pr_info("console %s\n", p);
+		dev_info(ap1302->dev,"log > %s\n",p);
 	}
 
 	ret = 0;
@@ -2624,53 +2627,36 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *fw_hdr;
 	unsigned int fw_size;
+	unsigned long clock_freq;
 	const u8 *fw_data;
-	unsigned int win_pos = 0;
-	unsigned int crc;
-	int ret;
+	unsigned int win_pos = 0,err,value;
+	int ret,i;
 
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
 	fw_data = (u8 *)&fw_hdr[1];
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
-	/* Clear the CRC register. */
-	ret = ap1302_write(ap1302, AP1302_SIP_CRC, 0xffff, NULL);
+	clock_freq = clk_get_rate(ap1302->clock);
+	dev_info(ap1302->dev,"AP1302 Clock Input %d\n",clock_freq);
+
+	// TODO: support fix-point s15.16 MHz value format
+	ret = ap1302_write(ap1302, AP1302_SYSTEM_FREQ_IN, AP1302_SYSTEM_FREQ_IN_MHZ(clock_freq/1000000), NULL);
 	if (ret)
 		return ret;
 
-	/*
-	 * Load the PLL initialization settings, set the bootdata stage to 2 to
-	 * apply the basic_init_hp settings, and wait 1ms for the PLL to lock.
-	 */
-	ret = ap1302_write_fw_window(ap1302, fw_data, fw_hdr->pll_init_size,
-				     &win_pos);
+	// TODO: Get MIPI Frequency from system
+	// TODO: support fix-point s15.16 MHz value format
+	ret = ap1302_write(ap1302, AP1302_HINF_MIPI_FREQ_TGT, AP1302_HINF_MIPI_FREQ_TGT_MHZ(900), NULL);
 	if (ret)
 		return ret;
 
-	ret = ap1302_write(ap1302, AP1302_BOOTDATA_STAGE, 0x0002, NULL);
-	if (ret)
-		return ret;
-
-	usleep_range(1000, 2000);
-
-	/* Load the rest of the bootdata content and verify the CRC. */
-	ret = ap1302_write_fw_window(ap1302, fw_data + fw_hdr->pll_init_size,
-				     fw_size - fw_hdr->pll_init_size, &win_pos);
+	/* Load bootdata, pll_init_size not needed for firmware 429 and later */
+	ret = ap1302_write_fw_window(ap1302, fw_data,
+				     fw_size, &win_pos);
 	if (ret)
 		return ret;
 
 	msleep(40);
-
-	ret = ap1302_read(ap1302, AP1302_SIP_CRC, &crc);
-	if (ret)
-		return ret;
-
-	if (crc != fw_hdr->crc) {
-		dev_warn(ap1302->dev,
-			 "CRC mismatch: expected 0x%04x, got 0x%04x\n",
-			 fw_hdr->crc, crc);
-		return -EAGAIN;
-	}
 
 	/*
 	 * Write 0xffff to the bootdata_stage register to indicate to the
@@ -2679,6 +2665,56 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	ret = ap1302_write(ap1302, AP1302_BOOTDATA_STAGE, 0xffff, NULL);
 	if (ret)
 		return ret;
+
+	msleep(10);
+
+	err = 0;
+	/*
+	 * Wait for AP1302_BOOTDATA_STAGE to become 0xFFFF
+	 */
+	for (i = 100; i > 0; i--) {
+
+		/* Print errors. */
+		ret = ap1302_read(ap1302, AP1302_ERROR, &value);
+		if (ret < 0)
+			return ret;
+
+		if(err != value)
+		{
+			err = value;
+			dev_warn(ap1302->dev,
+				"Error Reg : %04X\n",value);
+		}
+
+		/* Checking Bootdata stage */
+		ret = ap1302_read(ap1302, AP1302_BOOTDATA_STAGE, &value);
+		if (ret < 0)
+			return ret;
+
+		if (value == 0xffff)
+			break;
+
+		msleep(50);
+	}
+
+	if (value != 0xffff) {
+		dev_warn(ap1302->dev,
+			 "AP1302_BOOTDATA_STAGE not 0xFFFF : %04X\n",value);
+		return -EAGAIN;
+	}
+
+	/* Print errors. */
+	ret = ap1302_read(ap1302, AP1302_ERROR, &value);
+	if (ret < 0)
+		return ret;
+
+	if(err != value)
+	{
+		err = value;
+		dev_warn(ap1302->dev,
+			"Error Reg : %04X\n",value);
+		return -EAGAIN;
+	}
 
 	/* The AP1302 starts outputting frames right after boot, stop it. */
 	ret = ap1302_stall(ap1302, true);
@@ -2754,6 +2790,9 @@ static int ap1302_hw_init(struct ap1302_device *ap1302)
 
 		if (ret != -EAGAIN)
 			goto error_power;
+
+		// Dump
+		ap1302_log_status(&ap1302->sd);
 
 		ap1302_power_off(ap1302);
 	}
