@@ -2979,6 +2979,8 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	ap1302->dev = &client->dev;
 	ap1302->client = client;
 
+	dev_info(ap1302->dev, "AP1302 Driver: %s\n",AP1302_DRV_TAG);
+
 	mutex_init(&ap1302->lock);
 
 	ap1302->regmap16 = devm_regmap_init_i2c(client, &ap1302_reg16_config);
