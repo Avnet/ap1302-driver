@@ -692,7 +692,7 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 }
 
 /* Setup for regmap poll */
-static int ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
+static int __ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
 		struct regmap **regmap,u16 *addr)
 {
 	u32 page = AP1302_REG_PAGE(reg);
@@ -725,6 +725,9 @@ static int ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
 		return -EINVAL;
 	}
 
+	dev_dbg(ap1302->dev, "%s: R0x%08x -> 0x%04x\n", __func__,
+			reg,*addr);
+
 	return 0;
 }
 
@@ -733,7 +736,7 @@ static int ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
 	struct regmap *__regmap; \
 	u16 addr; \
 	int __retpoll; \
-	__retpoll = ap1302_poll_param(ap1302,reg,&__regmap,&addr); \
+	__retpoll = __ap1302_poll_param(ap1302,reg,&__regmap,&addr); \
 	if (!__retpoll) \
 		__retpoll = regmap_read_poll_timeout(__regmap, addr, val, cond, sleep_us, timeout_us); \
 	__retpoll; \
@@ -1314,37 +1317,59 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 
 static int ap1302_stall(struct ap1302_device *ap1302, bool stall)
 {
-	int ret = 0;
+	u32 value;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SYS_START, &value);
+	if (ret < 0)
+		return ret;
+
+	if ( !! (value & AP1302_SYS_START_STALL_STATUS) == stall ) {
+		dev_warn(ap1302->dev,
+			 "Stall status already as requested : %s\n",stall?"stalled":"running");
+		return 0;
+	}
 
 	if (stall) {
 		ap1302_write(ap1302, AP1302_SYS_START,
-			     AP1302_SYS_START_PLL_LOCK |
-			     AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
-		ap1302_write(ap1302, AP1302_SYS_START,
-			     AP1302_SYS_START_PLL_LOCK |
 			     AP1302_SYS_START_STALL_EN |
 			     AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
 		if (ret < 0)
 			return ret;
 
-		msleep(200);
+		/*
+		 * Wait for Stall Status
+		 */
+		ret = ap1302_poll_timeout(ap1302,AP1302_SYS_START,value,
+				value & AP1302_SYS_START_STALL_STATUS,
+				10000,5000000);
+		if (ret) {
+			dev_err(ap1302->dev,"Stall Failed: %d\n",ret);
+			return ret;
+		}
 
-		ap1302_write(ap1302, AP1302_ADV_IRQ_SYS_INTE,
-			     AP1302_ADV_IRQ_SYS_INTE_SIPM |
-			     AP1302_ADV_IRQ_SYS_INTE_SIPS_FIFO_WRITE, &ret);
+		ap1302->streaming = false;
+	} else {
+		ap1302->streaming = true;
+
+		ap1302_write(ap1302, AP1302_SYS_START,
+				    AP1302_SYS_START_STALL_EN |
+				    AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
 		if (ret < 0)
 			return ret;
 
-		ap1302->streaming = false;
-		return 0;
-	} else {
-		ap1302->streaming = true;
-		return ap1302_write(ap1302, AP1302_SYS_START,
-				    AP1302_SYS_START_PLL_LOCK |
-				    AP1302_SYS_START_STALL_STATUS |
-				    AP1302_SYS_START_STALL_EN |
-				    AP1302_SYS_START_STALL_MODE_DISABLED, NULL);
+		/*
+		 * Wait for Stall Status
+		 */
+		ret = ap1302_poll_timeout(ap1302,AP1302_SYS_START,value,
+				!(value & AP1302_SYS_START_STALL_STATUS),
+				10000,5000000);
+		if (ret) {
+			dev_err(ap1302->dev,"Stall Failed: %d\n",ret);
+			return ret;
+		}
 	}
+	return 0;
 }
 
 static int ap1302_set_mipi_t3_clk(struct ap1302_device *ap1302)
