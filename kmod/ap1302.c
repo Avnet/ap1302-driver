@@ -63,6 +63,7 @@
 #define AP1302_ORIENTATION_3DPATH	(1U << 2)
 #define AP1302_DZ_TGT_FCT			AP1302_REG_16BIT(0x1010)
 #define AP1302_SFX_MODE				AP1302_REG_16BIT(0x1016)
+#define AP1302_SFX_MODE_SFX_MASK		0x00ff
 #define AP1302_SFX_MODE_SFX_NORMAL		(0U << 0)
 #define AP1302_SFX_MODE_SFX_ALIEN		(1U << 0)
 #define AP1302_SFX_MODE_SFX_ANTIQUE		(2U << 0)
@@ -170,28 +171,35 @@
 #define AP1302_PREVIEW_HINF_CTRL_MIPI_LANES(n)	((n) << 0)
 
 /* IQ Registers */
-#define AP1302_AE_CTRL			AP1302_REG_16BIT(0x5002)
+#define AP1302_AE_CTRL				AP1302_REG_16BIT(0x5002)
 #define AP1302_AE_CTRL_STATS_SEL		BIT(11)
-#define AP1302_AE_CTRL_IMM				BIT(10)
+#define AP1302_AE_CTRL_IMM			BIT(10)
 #define AP1302_AE_CTRL_ROUND_ISO		BIT(9)
 #define AP1302_AE_CTRL_UROI_FACE		BIT(7)
 #define AP1302_AE_CTRL_UROI_LOCK		BIT(6)
 #define AP1302_AE_CTRL_UROI_BOUND		BIT(5)
-#define AP1302_AE_CTRL_IMM1				BIT(4)
+#define AP1302_AE_CTRL_IMM1			BIT(4)
 #define AP1302_AE_CTRL_MANUAL_EXP_TIME_GAIN	(0U << 0)
 #define AP1302_AE_CTRL_MANUAL_BV_EXP_TIME	(1U << 0)
 #define AP1302_AE_CTRL_MANUAL_BV_GAIN		(2U << 0)
 #define AP1302_AE_CTRL_MANUAL_BV_ISO		(3U << 0)
 #define AP1302_AE_CTRL_AUTO_BV_EXP_TIME		(9U << 0)
-#define AP1302_AE_CTRL_AUTO_BV_GAIN			(10U << 0)
-#define AP1302_AE_CTRL_AUTO_BV_ISO			(11U << 0)
-#define AP1302_AE_CTRL_FULL_AUTO			(12U << 0)
+#define AP1302_AE_CTRL_AUTO_BV_GAIN		(10U << 0)
+#define AP1302_AE_CTRL_AUTO_BV_ISO		(11U << 0)
+#define AP1302_AE_CTRL_FULL_AUTO		(12U << 0)
 #define AP1302_AE_CTRL_MODE_MASK		0x000f
-#define AP1302_AE_MANUAL_GAIN		AP1302_REG_16BIT(0x5006)
+#define AP1302_AE_MANUAL_GAIN			AP1302_REG_16BIT(0x5006)
+#define AP1302_AE_MANUAL_GAIN_MASK		0xFFFF
 #define AP1302_AE_BV_OFF			AP1302_REG_16BIT(0x5014)
 #define AP1302_AE_MET				AP1302_REG_16BIT(0x503E)
+#define AP1302_AE_MET_MASK			0x0003
 #define AP1302_AF_CTRL				AP1302_REG_16BIT(0x5058)
-#define AP1302_AF_CTRL_MODE_MASK		0x000f
+#define AP1302_AF_CTRL_MODE_MASK		0x0003
+#define AP1302_AF_CTRL_MODE_OFF			(0U << 0)
+#define AP1302_AF_CTRL_MODE_STANDBY		(1U << 0)
+#define AP1302_AF_CTRL_MODE_AUTO		(2U << 0)
+#define AP1302_AF_CTRL_MODE_MANUAL		(3U << 0)
+#define AP1302_AF_CTRL_TRIGGER			BIT(3)
 #define AP1302_AWB_CTRL				AP1302_REG_16BIT(0x5100)
 #define AP1302_AWB_CTRL_RECALC			BIT(13)
 #define AP1302_AWB_CTRL_POSTGAIN		BIT(12)
@@ -227,6 +235,7 @@
 #define AP1302_FLICK_CTRL_MODE_MANUAL		(1U << 0)
 #define AP1302_FLICK_CTRL_MODE_AUTO		(2U << 0)
 #define AP1302_SCENE_CTRL			AP1302_REG_16BIT(0x5454)
+#define AP1302_SCENE_CTRL_MODE_MASK		0x00FF
 #define AP1302_SCENE_CTRL_MODE_NORMAL		(0U << 0)
 #define AP1302_SCENE_CTRL_MODE_PORTRAIT		(1U << 0)
 #define AP1302_SCENE_CTRL_MODE_LANDSCAPE	(2U << 0)
@@ -1435,6 +1444,28 @@ static int ap1302_set_wb_mode(struct ap1302_device *ap1302, s32 mode)
 	return ap1302_write(ap1302, AP1302_AWB_CTRL, val, NULL);
 }
 
+static int ap1302_get_wb_mode(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AWB_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_AWB_CTRL_MODE_MASK;
+	*mode = 0; // Default to V4L2_WHITE_BALANCE_MANUAL
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_wb_values);ret++) {
+		if (val == ap1302_wb_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
+}
+
 static int ap1302_set_exposure(struct ap1302_device *ap1302, s32 mode)
 {
 	u32 val;
@@ -1450,14 +1481,51 @@ static int ap1302_set_exposure(struct ap1302_device *ap1302, s32 mode)
 	return ap1302_write(ap1302, AP1302_AE_CTRL, val, NULL);
 }
 
+static int ap1302_get_exposure(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AE_CTRL, &val);
+	if (ret)
+		return ret;
+	*mode = val&AP1302_AE_CTRL_MODE_MASK;
+	return 0;
+}
+
 static int ap1302_set_exp_met(struct ap1302_device *ap1302, s32 val)
 {
 	return ap1302_write(ap1302, AP1302_AE_MET, val, NULL);
 }
 
+static int ap1302_get_exp_met(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_AE_MET, &val);
+	if (ret)
+		return ret;
+
+	*value = val & AP1302_AE_MET_MASK;
+	return 0;
+}
+
 static int ap1302_set_gain(struct ap1302_device *ap1302, s32 val)
 {
+	// Format is U8.8
 	return ap1302_write(ap1302, AP1302_AE_MANUAL_GAIN, val, NULL);
+}
+
+static int ap1302_get_gain(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_AE_MANUAL_GAIN, &val);
+	if (ret)
+		return ret;
+
+	*value = val & AP1302_AE_MANUAL_GAIN_MASK;
+	return 0;
 }
 
 static int ap1302_set_hflip(struct ap1302_device *ap1302, s32 flip)
@@ -1475,6 +1543,19 @@ static int ap1302_set_hflip(struct ap1302_device *ap1302, s32 flip)
 	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
 }
 
+static int ap1302_get_hflip(struct ap1302_device *ap1302, s32 *flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*flip = !!(val&AP1302_ORIENTATION_HFLIP);
+	return 0;
+}
+
 static int ap1302_set_vflip(struct ap1302_device *ap1302, s32 flip)
 {
 	u32 val;
@@ -1490,29 +1571,107 @@ static int ap1302_set_vflip(struct ap1302_device *ap1302, s32 flip)
 	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
 }
 
+static int ap1302_get_vflip(struct ap1302_device *ap1302, s32 *flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*flip = !!(val&AP1302_ORIENTATION_VFLIP);
+	return 0;
+}
+
 static int ap1302_set_contrast(struct ap1302_device *ap1302, s32 val)
 {
+	// Format is s3.12
 	return ap1302_write(ap1302, AP1302_CONTRAST, val, NULL);
+}
+
+static int ap1302_get_contrast(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_CONTRAST, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static int ap1302_set_brightness(struct ap1302_device *ap1302, s32 val)
 {
+	// Format is s3.12
 	return ap1302_write(ap1302, AP1302_BRIGHTNESS, val, NULL);
+}
+
+static int ap1302_get_brightness(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_BRIGHTNESS, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static int ap1302_set_saturation(struct ap1302_device *ap1302, s32 val)
 {
+	// Format is s3.12
 	return ap1302_write(ap1302, AP1302_SATURATION, val, NULL);
+}
+
+static int ap1302_get_saturation(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_SATURATION, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static int ap1302_set_gamma(struct ap1302_device *ap1302, s32 val)
 {
+	// Format is s3.12
 	return ap1302_write(ap1302, AP1302_GAMMA, val, NULL);
+}
+
+static int ap1302_get_gamma(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_GAMMA, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static int ap1302_set_zoom(struct ap1302_device *ap1302, s32 val)
 {
+	// Format s7.8
 	return ap1302_write(ap1302, AP1302_DZ_TGT_FCT, val, NULL);
+}
+
+static int ap1302_get_zoom(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_DZ_TGT_FCT, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static u16 ap1302_sfx_values[] = {
@@ -1536,8 +1695,31 @@ static u16 ap1302_sfx_values[] = {
 
 static int ap1302_set_special_effect(struct ap1302_device *ap1302, s32 val)
 {
-	return ap1302_write(ap1302, AP1302_SFX_MODE, ap1302_sfx_values[val],
+	return ap1302_write(ap1302, AP1302_SFX_MODE, ap1302_sfx_values[val]&AP1302_SFX_MODE_SFX_MASK,
 			    NULL);
+}
+
+static int ap1302_get_special_effect(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SFX_MODE, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_SFX_MODE_SFX_MASK;
+
+	*mode = V4L2_COLORFX_NONE; // Default
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_sfx_values);ret++) {
+		if (val == ap1302_sfx_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
 }
 
 static u16 ap1302_scene_mode_values[] = {
@@ -1560,7 +1742,30 @@ static u16 ap1302_scene_mode_values[] = {
 static int ap1302_set_scene_mode(struct ap1302_device *ap1302, s32 val)
 {
 	return ap1302_write(ap1302, AP1302_SCENE_CTRL,
-			    ap1302_scene_mode_values[val], NULL);
+			    ap1302_scene_mode_values[val]&AP1302_SCENE_CTRL_MODE_MASK, NULL);
+}
+
+static int ap1302_get_scene_mode(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SCENE_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_SCENE_CTRL_MODE_MASK;
+
+	*mode = V4L2_SCENE_MODE_NONE; // Default
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_scene_mode_values);ret++) {
+		if (val == ap1302_scene_mode_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
 }
 
 static const u16 ap1302_flicker_values[] = {
@@ -1576,6 +1781,27 @@ static int ap1302_set_flicker_freq(struct ap1302_device *ap1302, s32 val)
 			    ap1302_flicker_values[val], NULL);
 }
 
+static int ap1302_get_flicker_freq(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_FLICK_CTRL, &val);
+	if (ret)
+		return ret;
+
+	*value = 0; // Default
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_flicker_values);ret++) {
+		if (val == ap1302_flicker_values[ret]) {
+			*value = ret;
+			break;
+		}
+	}
+
+	return 0;
+}
+
 static int ap1302_set_auto_focus(struct ap1302_device *ap1302, s32 mode)
 {
 	u32 val;
@@ -1585,11 +1811,24 @@ static int ap1302_set_auto_focus(struct ap1302_device *ap1302, s32 mode)
 	if (ret)
 		return ret;
 
-	val &= ~AP1302_AF_CTRL_MODE_MASK;
+	val &= ~(AP1302_AF_CTRL_MODE_MASK|AP1302_AF_CTRL_TRIGGER);
 	if (mode)
-		val |= 0x6;
+		val |= AP1302_AF_CTRL_MODE_AUTO|AP1302_AF_CTRL_TRIGGER;
 
 	return ap1302_write(ap1302, AP1302_AF_CTRL, val, NULL);
+}
+
+static int ap1302_get_auto_focus(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &val);
+	if (ret)
+		return ret;
+
+	*mode = (val&AP1302_AF_CTRL_MODE_MASK)==AP1302_AF_CTRL_MODE_AUTO?1:0;
+	return 0;
 }
 
 static int ap1302_set_3d_path(struct ap1302_device *ap1302, s32 path)
@@ -1605,6 +1844,19 @@ static int ap1302_set_3d_path(struct ap1302_device *ap1302, s32 path)
 	val |= path?AP1302_ORIENTATION_3DPATH:0;
 
 	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
+static int ap1302_get_3d_path(struct ap1302_device *ap1302, s32 *path)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*path = !!(val&AP1302_ORIENTATION_3DPATH);
+	return 0;
 }
 
 static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -1660,6 +1912,65 @@ static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_AP1302_3D_PATH:
 		return ap1302_set_3d_path(ap1302, ctrl->val);
+
+	default:
+		return -EINVAL;
+	}
+}
+
+static int ap1302_g_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ap1302_device *ap1302 =
+		container_of(ctrl->handler, struct ap1302_device, ctrls);
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
+		return ap1302_get_wb_mode(ap1302, &ctrl->val);
+
+	case V4L2_CID_EXPOSURE:
+		return ap1302_get_exposure(ap1302, &ctrl->val);
+
+	case V4L2_CID_EXPOSURE_METERING:
+		return ap1302_get_exp_met(ap1302, &ctrl->val);
+
+	case V4L2_CID_GAIN:
+		return ap1302_get_gain(ap1302, &ctrl->val);
+
+	case V4L2_CID_HFLIP:
+		return ap1302_get_hflip(ap1302, &ctrl->val);
+
+	case V4L2_CID_VFLIP:
+		return ap1302_get_vflip(ap1302, &ctrl->val);
+
+	case V4L2_CID_GAMMA:
+		return ap1302_get_gamma(ap1302, &ctrl->val);
+
+	case V4L2_CID_CONTRAST:
+		return ap1302_get_contrast(ap1302, &ctrl->val);
+
+	case V4L2_CID_BRIGHTNESS:
+		return ap1302_get_brightness(ap1302, &ctrl->val);
+
+	case V4L2_CID_SATURATION:
+		return ap1302_get_saturation(ap1302, &ctrl->val);
+
+	case V4L2_CID_ZOOM_ABSOLUTE:
+		return ap1302_get_zoom(ap1302, &ctrl->val);
+
+	case V4L2_CID_COLORFX:
+		return ap1302_get_special_effect(ap1302, &ctrl->val);
+
+	case V4L2_CID_SCENE_MODE:
+		return ap1302_get_scene_mode(ap1302, &ctrl->val);
+
+	case V4L2_CID_POWER_LINE_FREQUENCY:
+		return ap1302_get_flicker_freq(ap1302, &ctrl->val);
+
+	case V4L2_CID_FOCUS_AUTO:
+		return ap1302_get_auto_focus(ap1302, &ctrl->val);
+
+	case V4L2_CID_AP1302_3D_PATH:
+		return ap1302_get_3d_path(ap1302, &ctrl->val);
 
 	default:
 		return -EINVAL;
@@ -1816,7 +2127,18 @@ static int ap1302_ctrls_init(struct ap1302_device *ap1302)
 		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(ap1302_ctrls); i++)
-		v4l2_ctrl_new_custom(&ap1302->ctrls, &ap1302_ctrls[i], NULL);
+	{
+		struct v4l2_ctrl * ctrl = v4l2_ctrl_new_custom(&ap1302->ctrls,
+								&ap1302_ctrls[i], NULL);
+		ret = ap1302_g_ctrl(ctrl);
+		if (!ret && ctrl->default_value != ctrl->val) {
+			// Updating default value based on firmware values
+			dev_info(ap1302->dev,"Ctrl '%s' default value updated from %lld to %d\n",
+					ctrl->name, ctrl->default_value, ctrl->val);
+			ctrl->default_value = ctrl->val;
+			ctrl->cur.val = ctrl->val;
+		}
+	}
 
 	if (ap1302->ctrls.error) {
 		ret = ap1302->ctrls.error;
