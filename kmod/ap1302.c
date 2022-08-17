@@ -691,6 +691,54 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 	return __ap1302_read(ap1302, reg, val);
 }
 
+/* Setup for regmap poll */
+static int ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
+		struct regmap **regmap,u16 *addr)
+{
+	u32 page = AP1302_REG_PAGE(reg);
+	int ret;
+
+	if (page) {
+		if (ap1302->reg_page != page) {
+			ret = __ap1302_write(ap1302, AP1302_ADVANCED_BASE,
+					     page);
+			if (ret < 0)
+				return ret;
+
+			ap1302->reg_page = page;
+		}
+
+		reg &= ~AP1302_REG_PAGE_MASK;
+		reg += AP1302_REG_ADV_START;
+	}
+
+	*addr = AP1302_REG_ADDR(reg);
+
+	switch (AP1302_REG_SIZE(reg)) {
+	case 2:
+		*regmap=ap1302->regmap16;
+		break;
+	case 4:
+		*regmap=ap1302->regmap32;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+#define ap1302_poll_timeout(ap1302,reg,val,cond,sleep_us,timeout_us) \
+({ \
+	struct regmap *__regmap; \
+	u16 addr; \
+	int __retpoll; \
+	__retpoll = ap1302_poll_param(ap1302,reg,&__regmap,&addr); \
+	if (!__retpoll) \
+		__retpoll = regmap_read_poll_timeout(__regmap, addr, val, cond, sleep_us, timeout_us); \
+	__retpoll; \
+})
+
 /* -----------------------------------------------------------------------------
  * Sensor Registers Access
  *
@@ -1135,7 +1183,11 @@ static int ap1302_power_on(struct ap1302_device *ap1302)
 	/* 2. Power up the regulators. */
 	if (ap1302->vcc_supply)
 	{
-		regulator_enable(ap1302->vcc_supply);
+		ret = regulator_enable(ap1302->vcc_supply);
+		if (ret < 0) {
+			dev_err(ap1302->dev, "Failed to enable vcc supply: %d\n", ret);
+			return ret;
+		}
 		usleep_range(200, 1000);
 	}
 
@@ -2645,15 +2697,15 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	unsigned int fw_size;
 	unsigned long clock_freq;
 	const u8 *fw_data;
-	unsigned int win_pos = 0,err,value;
-	int ret,i;
+	unsigned int win_pos = 0,value;
+	int ret;
 
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
 	fw_data = (u8 *)&fw_hdr[1];
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
 	clock_freq = clk_get_rate(ap1302->clock);
-	dev_info(ap1302->dev,"AP1302 Clock Input %d\n",clock_freq);
+	dev_info(ap1302->dev,"AP1302 Clock Input %ld\n",clock_freq);
 
 	// TODO: support fix-point s15.16 MHz value format
 	ret = ap1302_write(ap1302, AP1302_SYSTEM_FREQ_IN, AP1302_SYSTEM_FREQ_IN_MHZ(clock_freq/1000000), NULL);
@@ -2684,39 +2736,16 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 
 	msleep(10);
 
-	err = 0;
 	/*
 	 * Wait for AP1302_BOOTDATA_STAGE to become 0xFFFF
 	 */
-	for (i = 100; i > 0; i--) {
-
-		/* Print errors. */
-		ret = ap1302_read(ap1302, AP1302_ERROR, &value);
-		if (ret < 0)
-			return ret;
-
-		if(err != value)
-		{
-			err = value;
-			dev_warn(ap1302->dev,
-				"Error Reg : %04X\n",value);
-		}
-
-		/* Checking Bootdata stage */
-		ret = ap1302_read(ap1302, AP1302_BOOTDATA_STAGE, &value);
-		if (ret < 0)
-			return ret;
-
-		if (value == 0xffff)
-			break;
-
-		msleep(50);
-	}
-
-	if (value != 0xffff) {
-		dev_warn(ap1302->dev,
-			 "AP1302_BOOTDATA_STAGE not 0xFFFF : %04X\n",value);
-		return -EAGAIN;
+	ret = ap1302_poll_timeout(ap1302, AP1302_BOOTDATA_STAGE,
+			value,value==0xFFFF, 10000, 5000000);
+	if (ret < 0)
+	{
+		dev_err(ap1302->dev,
+			 "AP1302_BOOTDATA_STAGE not 0xFFFF : %04X (POLL %d)\n",value,ret);
+		return ret;
 	}
 
 	/* Print errors. */
@@ -2724,9 +2753,8 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	if (ret < 0)
 		return ret;
 
-	if(err != value)
+	if(value)
 	{
-		err = value;
 		dev_warn(ap1302->dev,
 			"Error Reg : %04X\n",value);
 		return -EAGAIN;
