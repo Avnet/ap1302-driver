@@ -271,9 +271,10 @@
 #define AP1302_SYS_START_RESTART_ERROR		BIT(11)
 #define AP1302_SYS_START_STALL_STATUS		BIT(9)
 #define AP1302_SYS_START_STALL_EN		BIT(8)
-#define AP1302_SYS_START_STALL_MODE_FRAME	(0U << 6)
-#define AP1302_SYS_START_STALL_MODE_DISABLED	(1U << 6)
-#define AP1302_SYS_START_STALL_MODE_POWER_DOWN	(2U << 6)
+#define AP1302_SYS_START_STALL_MODE_FRAME		(0U << 6)
+#define AP1302_SYS_START_STALL_MODE_DISABLED		(1U << 6)
+#define AP1302_SYS_START_STALL_MODE_STANDBY		(2U << 6)
+#define AP1302_SYS_START_STALL_MODE_STANDBY_SENSOR_OFF	(3U << 6)
 #define AP1302_SYS_START_GO			BIT(4)
 #define AP1302_SYS_START_PATCH_FUN		BIT(1)
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
@@ -474,6 +475,8 @@ struct ap1302_device {
 		struct mutex lock;
 		u32 sipm_addr;
 	} debugfs;
+
+	bool stall_standby;
 };
 
 static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
@@ -1340,9 +1343,15 @@ static int ap1302_stall(struct ap1302_device *ap1302, bool stall)
 	}
 
 	if (stall) {
+		if (ap1302->stall_standby)
+			dev_info(ap1302->dev,"Standby, sensor shutdown stall mode\n");
+
 		ap1302_write(ap1302, AP1302_SYS_START,
-			     AP1302_SYS_START_STALL_EN |
-			     AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
+				 AP1302_SYS_START_STALL_EN |
+				 (ap1302->stall_standby?
+					AP1302_SYS_START_STALL_MODE_STANDBY_SENSOR_OFF:
+					AP1302_SYS_START_STALL_MODE_DISABLED)
+				, &ret);
 		if (ret < 0)
 			return ret;
 
@@ -2914,6 +2923,32 @@ static void ap1302_sensor_cleanup(struct ap1302_sensor *sensor)
 	of_node_put(sensor->of_node);
 }
 
+/* --------------------------------------------------------------------------
+ * sysfs attributes
+ */
+static ssize_t ap1302_store_stall_standby(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	if (strtobool(buf, &ap1302->stall_standby) < 0)
+		return -EINVAL;
+
+	return size;
+}
+
+static ssize_t ap1302_show_stall_standby(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	return sysfs_emit(buf, "%d\n", ap1302->stall_standby);
+}
+
+static DEVICE_ATTR(stall_standby, 0644, ap1302_show_stall_standby, ap1302_store_stall_standby);
+
 /* -----------------------------------------------------------------------------
  * Boot & Firmware Handling
  */
@@ -3402,6 +3437,8 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 
 	v4l2_fwnode_endpoint_free(&ap1302->bus_cfg);
 
+	device_remove_file(ap1302->dev, &dev_attr_stall_standby);
+
 	mutex_destroy(&ap1302->lock);
 }
 
@@ -3456,6 +3493,12 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	ret = ap1302_hw_init(ap1302);
 	if (ret)
 		goto error;
+
+	ret = device_create_file(ap1302->dev, &dev_attr_stall_standby);
+	if (ret) {
+		dev_err(ap1302->dev, "could not register sysfs entry\n");
+		goto error_hw_cleanup;
+	}
 
 	ap1302_debugfs_init(ap1302);
 
