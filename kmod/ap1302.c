@@ -2555,12 +2555,6 @@ static void ap1302_log_lane_state(struct ap1302_sensor *sensor,
 		}
 		pr_cont("\n");
 	}
-
-	/* Reset the error flags. */
-	for (lane = 0; lane < 4; ++lane)
-		ap1302_write(sensor->ap1302,
-			     AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
-			     AP1302_LANE_ERR | AP1302_LANE_ABORT, NULL);
 }
 
 static int ap1302_log_status(struct v4l2_subdev *sd)
