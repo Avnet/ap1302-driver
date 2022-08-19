@@ -3071,7 +3071,7 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *fw_hdr;
 	unsigned int fw_size;
-	unsigned long clock_freq;
+	unsigned long clock_freq,clock_fp_mhz;
 	const u8 *fw_data;
 	unsigned int win_pos = 0,value;
 	int ret;
@@ -3080,17 +3080,26 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	fw_data = (u8 *)&fw_hdr[1];
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
-	clock_freq = clk_get_rate(ap1302->clock);
-	dev_info(ap1302->dev,"AP1302 Clock Input %ld\n",clock_freq);
+	// Fixed Point Calculation
+#define HZ_TO_S15_16_MHZ(hz) \
+	(s32)div_s64( ((s64)hz)<<16, 1000000)
 
-	// TODO: support fix-point s15.16 MHz value format
-	ret = ap1302_write(ap1302, AP1302_SYSTEM_FREQ_IN, AP1302_SYSTEM_FREQ_IN_MHZ(clock_freq/1000000), NULL);
+	clock_freq = clk_get_rate(ap1302->clock);
+	clock_fp_mhz = HZ_TO_S15_16_MHZ(clock_freq);
+	dev_info(ap1302->dev,"AP1302 oscillator clock %ld hz (FP 0x%08x)\n",clock_freq,clock_fp_mhz);
+
+	ret = ap1302_write(ap1302, AP1302_SYSTEM_FREQ_IN,
+			clock_fp_mhz, NULL);
 	if (ret)
 		return ret;
 
-	// TODO: Get MIPI Frequency from system
-	// TODO: support fix-point s15.16 MHz value format
-	ret = ap1302_write(ap1302, AP1302_HINF_MIPI_FREQ_TGT, AP1302_HINF_MIPI_FREQ_TGT_MHZ(900), NULL);
+	// Using the first link frequency
+	clock_freq = (u32)*ap1302->bus_cfg.link_frequencies;
+	clock_fp_mhz = HZ_TO_S15_16_MHZ(clock_freq);
+	dev_info(ap1302->dev,"AP1302 MIPI frequency %ld hz (FP 0x%08x)\n",clock_freq,clock_fp_mhz);
+
+	ret = ap1302_write(ap1302, AP1302_HINF_MIPI_FREQ_TGT,
+			clock_fp_mhz, NULL);
 	if (ret)
 		return ret;
 
@@ -3365,6 +3374,11 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	if (ret < 0) {
 		dev_err(ap1302->dev, "Failed to parse bus configuration\n");
 		return ret;
+	}
+
+	if (!ap1302->bus_cfg.nr_of_link_frequencies) {
+		dev_err(ap1302->dev, "no link frequencies defined");
+		return -EINVAL;
 	}
 
 	/* Sensors */
