@@ -53,6 +53,7 @@
 #define AP1302_SIPM_ERR_0			AP1302_REG_16BIT(0x0014)
 #define AP1302_SIPM_ERR_1			AP1302_REG_16BIT(0x0016)
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
+#define AP1302_AF_POS				AP1302_REG_16BIT(0x01B0)
 #define AP1302_CON_BUF(n)			AP1302_REG_16BIT(0x0a2c + (n))
 #define AP1302_CON_BUF_SIZE			512
 
@@ -2487,97 +2488,6 @@ static const char * const ap1302_lane_states[] = {
 	"error_s",
 };
 
-static void ap1302_log_lane_state(struct ap1302_sensor *sensor,
-				  unsigned int index)
-{
-	static const char * const lp_states[] = {
-		"00", "10", "01", "11",
-	};
-
-	unsigned int counts[4][ARRAY_SIZE(ap1302_lane_states)];
-	unsigned int samples = 0;
-	unsigned int lane;
-	unsigned int i;
-	u32 first[4] = { 0, };
-	u32 last[4] = { 0, };
-	int ret;
-
-	memset(counts, 0, sizeof(counts));
-
-	for (i = 0; i < 1000; ++i) {
-		u32 values[4];
-
-		/*
-		 * Read the state of all lanes and skip read errors and invalid
-		 * values.
-		 */
-		for (lane = 0; lane < 4; ++lane) {
-			ret = ap1302_read(sensor->ap1302,
-					  AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
-					  &values[lane]);
-			if (ret < 0)
-				break;
-
-			if (AP1302_LANE_STATE(values[lane]) >=
-			    ARRAY_SIZE(ap1302_lane_states)) {
-				ret = -EINVAL;
-				break;
-			}
-		}
-
-		if (ret < 0)
-			continue;
-
-		/* Accumulate the samples and save the first and last states. */
-		for (lane = 0; lane < 4; ++lane)
-			counts[lane][AP1302_LANE_STATE(values[lane])]++;
-
-		if (!samples)
-			memcpy(first, values, sizeof(first));
-		memcpy(last, values, sizeof(last));
-
-		samples++;
-	}
-
-	if (!samples)
-		return;
-
-	/*
-	 * Print the LP state from the first sample, the error state from the
-	 * last sample, and the states accumulators for each lane.
-	 */
-	for (lane = 0; lane < 4; ++lane) {
-		u32 state = last[lane];
-		char error_msg[25] = "";
-
-		if (state & (AP1302_LANE_ERR | AP1302_LANE_ABORT)) {
-			unsigned int err = AP1302_LANE_ERR_STATE(state);
-			const char *err_state = NULL;
-
-			err_state = err < ARRAY_SIZE(ap1302_lane_states)
-				  ? ap1302_lane_states[err] : "INVALID";
-
-			snprintf(error_msg, sizeof(error_msg), "ERR (%s%s) %s LP%s",
-				 state & AP1302_LANE_ERR ? "E" : "",
-				 state & AP1302_LANE_ABORT ? "A" : "",
-				 err_state,
-				 lp_states[AP1302_LANE_ERR_LP_VAL(state)]);
-		}
-
-		dev_info(sensor->ap1302->dev, "SINF%u L%u state: LP%s %s",
-			 index, lane, lp_states[AP1302_LANE_LP_VAL(first[lane])],
-			 error_msg);
-
-		for (i = 0; i < ARRAY_SIZE(ap1302_lane_states); ++i) {
-			if (counts[lane][i])
-				pr_cont(" %s:%u",
-				       ap1302_lane_states[i],
-				       counts[lane][i]);
-		}
-		pr_cont("\n");
-	}
-}
-
 static int ap1302_log_status(struct v4l2_subdev *sd)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
@@ -2657,14 +2567,15 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 	dev_info(ap1302->dev, "Frame counters: ICP %u, HINF %u, BRAC %u\n",
 		 frame_count_icp, frame_count_hinf, frame_count_brac);
 
-	/* Sample the lane state. */
-	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
-		struct ap1302_sensor *sensor = &ap1302->sensors[i];
-
-		if (!sensor->ap1302)
-			continue;
-
-		ap1302_log_lane_state(sensor, i);
+	/* Provide Autofocus Info */
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &value);
+	if (ret < 0)
+		return ret;
+	if ( (value & AP1302_AF_CTRL_MODE_MASK) == AP1302_AF_CTRL_MODE_AUTO) {
+		ret = ap1302_read(ap1302, AP1302_AF_POS, &value);
+		if (ret < 0)
+			return ret;
+		dev_info(ap1302->dev, "AF Pos: %d\n",(s16)value);
 	}
 
 	return 0;
@@ -2960,6 +2871,115 @@ static ssize_t ap1302_show_stall_standby(struct device *dev,
 }
 
 static DEVICE_ATTR(stall_standby, 0644, ap1302_show_stall_standby, ap1302_store_stall_standby);
+
+static ssize_t ap1302_show_lane_status(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	static const char * const lp_states[] = {
+		"00", "10", "01", "11",
+	};
+	unsigned int index;
+	u32 buf_len=0;
+
+	/* Sample the lane state. */
+	for (index = 0; index < ARRAY_SIZE(ap1302->sensors); ++index) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[index];
+
+		if (!sensor->ap1302)
+			continue;
+
+		unsigned int counts[4][ARRAY_SIZE(ap1302_lane_states)];
+		unsigned int samples = 0;
+		unsigned int lane;
+		unsigned int i;
+		u32 first[4] = { 0, };
+		u32 last[4] = { 0, };
+		int ret;
+
+		memset(counts, 0, sizeof(counts));
+
+		for (i = 0; i < 1000; ++i) {
+			u32 values[4];
+
+			/*
+			 * Read the state of all lanes and skip read errors and invalid
+			 * values.
+			 */
+			for (lane = 0; lane < 4; ++lane) {
+				ret = ap1302_read(sensor->ap1302,
+						  AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
+						  &values[lane]);
+				if (ret < 0)
+					break;
+
+				if (AP1302_LANE_STATE(values[lane]) >=
+				    ARRAY_SIZE(ap1302_lane_states)) {
+					ret = -EINVAL;
+					break;
+				}
+			}
+
+			if (ret < 0)
+				continue;
+
+			/* Accumulate the samples and save the first and last states. */
+			for (lane = 0; lane < 4; ++lane)
+				counts[lane][AP1302_LANE_STATE(values[lane])]++;
+
+			if (!samples)
+				memcpy(first, values, sizeof(first));
+			memcpy(last, values, sizeof(last));
+
+			samples++;
+		}
+
+		if (!samples)
+			return buf_len;
+
+		/*
+		 * Print the LP state from the first sample, the error state from the
+		 * last sample, and the states accumulators for each lane.
+		 */
+		for (lane = 0; lane < 4; ++lane) {
+			u32 state = last[lane];
+			char error_msg[25] = "";
+
+			if (state & (AP1302_LANE_ERR | AP1302_LANE_ABORT)) {
+				unsigned int err = AP1302_LANE_ERR_STATE(state);
+				const char *err_state = NULL;
+
+				err_state = err < ARRAY_SIZE(ap1302_lane_states)
+					  ? ap1302_lane_states[err] : "INVALID";
+
+				scnprintf(error_msg, sizeof(error_msg), "ERR (%s%s) %s LP%s",
+					 state & AP1302_LANE_ERR ? "E" : "",
+					 state & AP1302_LANE_ABORT ? "A" : "",
+					 err_state,
+					 lp_states[AP1302_LANE_ERR_LP_VAL(state)]);
+			}
+			buf_len += scnprintf(buf+buf_len,PAGE_SIZE-buf_len,
+					"SINF%u L%u state: LP%s %s\n",
+					 index, lane,
+					 lp_states[AP1302_LANE_LP_VAL(first[lane])],
+					 error_msg);
+
+			for (i = 0; i < ARRAY_SIZE(ap1302_lane_states); ++i) {
+				if (counts[lane][i])
+					buf_len += scnprintf(buf+buf_len,
+						PAGE_SIZE-buf_len," %s:%u",
+						ap1302_lane_states[i],
+						counts[lane][i]);
+			}
+			buf_len += scnprintf(buf+buf_len,PAGE_SIZE-buf_len,"\n");
+		}
+	}
+
+	return buf_len;
+}
+
+static DEVICE_ATTR(lane_status, 0444, ap1302_show_lane_status, NULL);
 
 /* -----------------------------------------------------------------------------
  * Boot & Firmware Handling
@@ -3464,6 +3484,7 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 	v4l2_fwnode_endpoint_free(&ap1302->bus_cfg);
 
 	device_remove_file(ap1302->dev, &dev_attr_stall_standby);
+	device_remove_file(ap1302->dev, &dev_attr_lane_status);
 
 	mutex_destroy(&ap1302->lock);
 }
@@ -3521,6 +3542,7 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 		goto error;
 
 	ret = device_create_file(ap1302->dev, &dev_attr_stall_standby);
+	ret |= device_create_file(ap1302->dev, &dev_attr_lane_status);
 	if (ret) {
 		dev_err(ap1302->dev, "could not register sysfs entry\n");
 		goto error_hw_cleanup;
