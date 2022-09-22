@@ -231,6 +231,7 @@
 #define AP1302_FLICK_CTRL_FRC_OVERRIDE_MAX_ET	BIT(4)
 #define AP1302_FLICK_CTRL_FRC_OVERRIDE_UPPER_ET	BIT(3)
 #define AP1302_FLICK_CTRL_FRC_EN		BIT(2)
+#define AP1302_FLICK_CTRL_MODE_MASK		(3U << 0)
 #define AP1302_FLICK_CTRL_MODE_DISABLED		(0U << 0)
 #define AP1302_FLICK_CTRL_MODE_MANUAL		(1U << 0)
 #define AP1302_FLICK_CTRL_MODE_AUTO		(2U << 0)
@@ -1799,13 +1800,24 @@ static int ap1302_get_flicker_freq(struct ap1302_device *ap1302, s32 *value)
 	if (ret)
 		return ret;
 
-	*value = 0; // Default
+	*value = V4L2_CID_POWER_LINE_FREQUENCY_AUTO; // Default
 
-	for(ret=0;ret<ARRAY_SIZE(ap1302_flicker_values);ret++) {
-		if (val == ap1302_flicker_values[ret]) {
-			*value = ret;
-			break;
-		}
+
+	if ((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_DISABLED) {
+		*value = V4L2_CID_POWER_LINE_FREQUENCY_DISABLED;
+	}
+	else if((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_MANUAL) {
+		if((val>>8) == 50)
+			*value = V4L2_CID_POWER_LINE_FREQUENCY_50HZ;
+		if((val>>8) == 60)
+			*value = V4L2_CID_POWER_LINE_FREQUENCY_60HZ;
+
+	}
+	else if((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_AUTO) {
+		*value = V4L2_CID_POWER_LINE_FREQUENCY_AUTO;
 	}
 
 	return 0;
