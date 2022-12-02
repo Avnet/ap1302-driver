@@ -40,6 +40,11 @@ properties:
       Reference to the GPIO connected to the STANDBY pin (active high).
     maxItems: 1
 
+  vcc-supply:
+    description:
+      Reference to a regulator powering the ap1302
+    maxItems: 1
+
   port:
     $ref: /schemas/graph.yaml#/$defs/port-base
     unevaluatedProperties: false

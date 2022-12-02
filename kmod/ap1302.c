@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * ap1302.c - driver for AP1302 mezzanine
+ * Driver for the AP1302 external camera ISP from ON Semiconductor
  *
- * Copyright (C) 2020, Witekio, Inc.
+ * Copyright (C) 2021, Witekio, Inc.
+ * Copyright (C) 2021, Xilinx, Inc.
+ * Copyright (C) 2021, Laurent Pinchart <laurent.pinchart@ideasonboard.com>
  *
- * This driver can only provide limited feature on AP1302.
- * Still need enhancement
  */
 
 #include <linux/clk.h>
@@ -34,7 +34,7 @@
 #define AP1302_MIN_WIDTH			24U
 #define AP1302_MIN_HEIGHT			16U
 #define AP1302_MAX_WIDTH			4224U
-#define AP1302_MAX_HEIGHT 			4092U
+#define AP1302_MAX_HEIGHT			4092U
 
 #define AP1302_REG_16BIT(n)			((2 << 24) | (n))
 #define AP1302_REG_32BIT(n)			((4 << 24) | (n))
@@ -53,12 +53,18 @@
 #define AP1302_SIPM_ERR_0			AP1302_REG_16BIT(0x0014)
 #define AP1302_SIPM_ERR_1			AP1302_REG_16BIT(0x0016)
 #define AP1302_CHIP_REV				AP1302_REG_16BIT(0x0050)
+#define AP1302_AF_POS				AP1302_REG_16BIT(0x01B0)
 #define AP1302_CON_BUF(n)			AP1302_REG_16BIT(0x0a2c + (n))
 #define AP1302_CON_BUF_SIZE			512
 
 /* Control Registers */
+#define AP1302_ORIENTATION			AP1302_REG_16BIT(0x100C)
+#define AP1302_ORIENTATION_HFLIP	(1U << 0)
+#define AP1302_ORIENTATION_VFLIP	(1U << 1)
+#define AP1302_ORIENTATION_3DPATH	(1U << 2)
 #define AP1302_DZ_TGT_FCT			AP1302_REG_16BIT(0x1010)
 #define AP1302_SFX_MODE				AP1302_REG_16BIT(0x1016)
+#define AP1302_SFX_MODE_SFX_MASK		0x00ff
 #define AP1302_SFX_MODE_SFX_NORMAL		(0U << 0)
 #define AP1302_SFX_MODE_SFX_ALIEN		(1U << 0)
 #define AP1302_SFX_MODE_SFX_ANTIQUE		(2U << 0)
@@ -166,7 +172,35 @@
 #define AP1302_PREVIEW_HINF_CTRL_MIPI_LANES(n)	((n) << 0)
 
 /* IQ Registers */
+#define AP1302_AE_CTRL				AP1302_REG_16BIT(0x5002)
+#define AP1302_AE_CTRL_STATS_SEL		BIT(11)
+#define AP1302_AE_CTRL_IMM			BIT(10)
+#define AP1302_AE_CTRL_ROUND_ISO		BIT(9)
+#define AP1302_AE_CTRL_UROI_FACE		BIT(7)
+#define AP1302_AE_CTRL_UROI_LOCK		BIT(6)
+#define AP1302_AE_CTRL_UROI_BOUND		BIT(5)
+#define AP1302_AE_CTRL_IMM1			BIT(4)
+#define AP1302_AE_CTRL_MANUAL_EXP_TIME_GAIN	(0U << 0)
+#define AP1302_AE_CTRL_MANUAL_BV_EXP_TIME	(1U << 0)
+#define AP1302_AE_CTRL_MANUAL_BV_GAIN		(2U << 0)
+#define AP1302_AE_CTRL_MANUAL_BV_ISO		(3U << 0)
+#define AP1302_AE_CTRL_AUTO_BV_EXP_TIME		(9U << 0)
+#define AP1302_AE_CTRL_AUTO_BV_GAIN		(10U << 0)
+#define AP1302_AE_CTRL_AUTO_BV_ISO		(11U << 0)
+#define AP1302_AE_CTRL_FULL_AUTO		(12U << 0)
+#define AP1302_AE_CTRL_MODE_MASK		0x000f
+#define AP1302_AE_MANUAL_GAIN			AP1302_REG_16BIT(0x5006)
+#define AP1302_AE_MANUAL_GAIN_MASK		0xFFFF
 #define AP1302_AE_BV_OFF			AP1302_REG_16BIT(0x5014)
+#define AP1302_AE_MET				AP1302_REG_16BIT(0x503E)
+#define AP1302_AE_MET_MASK			0x0003
+#define AP1302_AF_CTRL				AP1302_REG_16BIT(0x5058)
+#define AP1302_AF_CTRL_MODE_MASK		0x0003
+#define AP1302_AF_CTRL_MODE_OFF			(0U << 0)
+#define AP1302_AF_CTRL_MODE_STANDBY		(1U << 0)
+#define AP1302_AF_CTRL_MODE_AUTO		(2U << 0)
+#define AP1302_AF_CTRL_MODE_MANUAL		(3U << 0)
+#define AP1302_AF_CTRL_TRIGGER			BIT(3)
 #define AP1302_AWB_CTRL				AP1302_REG_16BIT(0x5100)
 #define AP1302_AWB_CTRL_RECALC			BIT(13)
 #define AP1302_AWB_CTRL_POSTGAIN		BIT(12)
@@ -198,10 +232,12 @@
 #define AP1302_FLICK_CTRL_FRC_OVERRIDE_MAX_ET	BIT(4)
 #define AP1302_FLICK_CTRL_FRC_OVERRIDE_UPPER_ET	BIT(3)
 #define AP1302_FLICK_CTRL_FRC_EN		BIT(2)
+#define AP1302_FLICK_CTRL_MODE_MASK		(3U << 0)
 #define AP1302_FLICK_CTRL_MODE_DISABLED		(0U << 0)
 #define AP1302_FLICK_CTRL_MODE_MANUAL		(1U << 0)
 #define AP1302_FLICK_CTRL_MODE_AUTO		(2U << 0)
 #define AP1302_SCENE_CTRL			AP1302_REG_16BIT(0x5454)
+#define AP1302_SCENE_CTRL_MODE_MASK		0x00FF
 #define AP1302_SCENE_CTRL_MODE_NORMAL		(0U << 0)
 #define AP1302_SCENE_CTRL_MODE_PORTRAIT		(1U << 0)
 #define AP1302_SCENE_CTRL_MODE_LANDSCAPE	(2U << 0)
@@ -237,12 +273,17 @@
 #define AP1302_SYS_START_RESTART_ERROR		BIT(11)
 #define AP1302_SYS_START_STALL_STATUS		BIT(9)
 #define AP1302_SYS_START_STALL_EN		BIT(8)
-#define AP1302_SYS_START_STALL_MODE_FRAME	(0U << 6)
-#define AP1302_SYS_START_STALL_MODE_DISABLED	(1U << 6)
-#define AP1302_SYS_START_STALL_MODE_POWER_DOWN	(2U << 6)
+#define AP1302_SYS_START_STALL_MODE_FRAME		(0U << 6)
+#define AP1302_SYS_START_STALL_MODE_DISABLED		(1U << 6)
+#define AP1302_SYS_START_STALL_MODE_STANDBY		(2U << 6)
+#define AP1302_SYS_START_STALL_MODE_STANDBY_SENSOR_OFF	(3U << 6)
 #define AP1302_SYS_START_GO			BIT(4)
 #define AP1302_SYS_START_PATCH_FUN		BIT(1)
 #define AP1302_SYS_START_PLL_INIT		BIT(0)
+#define AP1302_SYSTEM_FREQ_IN			AP1302_REG_32BIT(0x6024)
+#define AP1302_SYSTEM_FREQ_IN_MHZ(x)		((x)<<16)
+#define AP1302_HINF_MIPI_FREQ_TGT		AP1302_REG_32BIT(0x6034)
+#define AP1302_HINF_MIPI_FREQ_TGT_MHZ(x)	((x)<<16)
 #define AP1302_DMA_SRC				AP1302_REG_32BIT(0x60a0)
 #define AP1302_DMA_DST				AP1302_REG_32BIT(0x60a4)
 #define AP1302_DMA_SIP_SIPM(n)			((n) << 26)
@@ -272,6 +313,13 @@
 #define AP1302_DMA_CTRL_MODE_UNPACK		(4 << 0)
 #define AP1302_DMA_CTRL_MODE_OTP_READ		(5 << 0)
 #define AP1302_DMA_CTRL_MODE_SIP_PROBE		(6 << 0)
+
+#define AP1302_BOOTDATA_CHECKSUM		AP1302_REG_16BIT(0x6134)
+
+#define AP1302_BRIGHTNESS			AP1302_REG_16BIT(0x7000)
+#define AP1302_CONTRAST			AP1302_REG_16BIT(0x7002)
+#define AP1302_SATURATION			AP1302_REG_16BIT(0x7006)
+#define AP1302_GAMMA				AP1302_REG_16BIT(0x700A)
 
 /* Misc Registers */
 #define AP1302_REG_ADV_START			0xe000
@@ -325,6 +373,19 @@
 #define AP1302_LANE_STATE_ERROR_S		0xc
 
 #define AP1302_ADV_CAPTURE_A_FV_CNT		AP1302_REG_32BIT(0x00490040)
+#define AP1302_ADV_HINF_MIPI_T3		AP1302_REG_32BIT(0x840014)
+#define AP1302_TCLK_POST_MASK			0xFF
+#define AP1302_TCLK_POST_SHIFT			0x0
+#define AP1302_TCLK_PRE_MASK			0xFF00
+#define AP1302_TCLK_PRE_SHIFT			0x8
+
+
+// TODO This should go in v4l2-controls.h after V4L2_CID_USER_IMX_BASE
+/* The base for the AP1302 driver controls.
+ * We reserve 32 controls for this driver. */
+#define V4L2_CID_USER_AP1302_BASE			(V4L2_CID_USER_BASE + 0x10c0)
+
+#define V4L2_CID_AP1302_3D_PATH				(V4L2_CID_USER_AP1302_BASE + 0)
 
 struct ap1302_device;
 
@@ -388,13 +449,14 @@ struct ap1302_device {
 
 	struct gpio_desc *reset_gpio;
 	struct gpio_desc *standby_gpio;
+	struct regulator *vcc_supply;
 	struct clk *clock;
 	struct regmap *regmap16;
 	struct regmap *regmap32;
 	u32 reg_page;
 
 	const struct firmware *fw;
-	
+
 	struct v4l2_fwnode_endpoint bus_cfg;
 
 	struct mutex lock;	/* Protects formats */
@@ -403,16 +465,20 @@ struct ap1302_device {
 	struct media_pad pads[AP1302_PAD_MAX];
 	struct ap1302_format formats[AP1302_PAD_MAX];
 	unsigned int width_factor;
+	bool streaming;
 
 	struct v4l2_ctrl_handler ctrls;
 
 	const struct ap1302_sensor_info *sensor_info;
 	struct ap1302_sensor sensors[2];
+
 	struct {
 		struct dentry *dir;
 		struct mutex lock;
 		u32 sipm_addr;
 	} debugfs;
+
+	bool stall_standby;
 };
 
 static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
@@ -420,10 +486,21 @@ static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
 	return container_of(sd, struct ap1302_device, sd);
 }
 
+#define FW_MAGIC 0x33315041
+
 struct ap1302_firmware_header {
+	u32 magic;
+	u32 version;
+	char desc[256];
 	u16 pll_init_size;
 	u16 crc;
 } __packed;
+
+/**
+ * Allows specifying a firmware file when loading the module
+ */
+static char *fw_name_param=NULL;
+module_param_named(fw, fw_name_param, charp, 0444);
 
 #define MAX_FW_LOAD_RETRIES 3
 
@@ -437,6 +514,13 @@ static const struct ap1302_format_info supported_video_formats[] = {
 		.out_fmt = AP1302_PREVIEW_OUT_FMT_FT_YUV_JFIF
 			 | AP1302_PREVIEW_OUT_FMT_FST_YUV_420,
 	},
+#if 0 // MEDIA_BUS_FMT_VYYUYY8_1X24 for Xilinx only ?
+	{
+		.code = MEDIA_BUS_FMT_VYYUYY8_1X24,
+		.out_fmt = AP1302_PREVIEW_OUT_FMT_FT_YUV_JFIF
+			 | AP1302_PREVIEW_OUT_FMT_FST_YUV_420,
+	},
+#endif
 };
 
 /* -----------------------------------------------------------------------------
@@ -561,7 +645,7 @@ static int ap1302_write(struct ap1302_device *ap1302, u32 reg, u32 val,
 		reg += AP1302_REG_ADV_START;
 	}
 
-	ret =__ap1302_write(ap1302, reg, val);
+	ret = __ap1302_write(ap1302, reg, val);
 
 done:
 	if (err && ret)
@@ -620,6 +704,57 @@ static int ap1302_read(struct ap1302_device *ap1302, u32 reg, u32 *val)
 
 	return __ap1302_read(ap1302, reg, val);
 }
+
+/* Setup for regmap poll */
+static int __ap1302_poll_param(struct ap1302_device *ap1302, u32 reg,
+		struct regmap **regmap,u16 *addr)
+{
+	u32 page = AP1302_REG_PAGE(reg);
+	int ret;
+
+	if (page) {
+		if (ap1302->reg_page != page) {
+			ret = __ap1302_write(ap1302, AP1302_ADVANCED_BASE,
+					     page);
+			if (ret < 0)
+				return ret;
+
+			ap1302->reg_page = page;
+		}
+
+		reg &= ~AP1302_REG_PAGE_MASK;
+		reg += AP1302_REG_ADV_START;
+	}
+
+	*addr = AP1302_REG_ADDR(reg);
+
+	switch (AP1302_REG_SIZE(reg)) {
+	case 2:
+		*regmap=ap1302->regmap16;
+		break;
+	case 4:
+		*regmap=ap1302->regmap32;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	dev_dbg(ap1302->dev, "%s: R0x%08x -> 0x%04x\n", __func__,
+			reg,*addr);
+
+	return 0;
+}
+
+#define ap1302_poll_timeout(ap1302,reg,val,cond,sleep_us,timeout_us) \
+({ \
+	struct regmap *__regmap; \
+	u16 addr; \
+	int __retpoll; \
+	__retpoll = __ap1302_poll_param(ap1302,reg,&__regmap,&addr); \
+	if (!__retpoll) \
+		__retpoll = regmap_read_poll_timeout(__regmap, addr, val, cond, sleep_us, timeout_us); \
+	__retpoll; \
+})
 
 /* -----------------------------------------------------------------------------
  * Sensor Registers Access
@@ -736,7 +871,7 @@ static int ap1302_sipm_write(struct ap1302_device *ap1302, unsigned int port,
 	 * reads.
 	 */
 	ap1302_write(ap1302, AP1302_DMA_SRC,
-			(val << 16) | AP1302_REG_ADDR(AP1302_DMA_SRC), &ret);
+		     (val << 16) | AP1302_REG_ADDR(AP1302_DMA_SRC), &ret);
 	if (ret < 0)
 		return ret;
 
@@ -848,6 +983,82 @@ unlock:
 	return ret;
 }
 
+static int ap1302_mipi_tclk_post_get(void *arg, u64 *val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 value;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+
+	ret = ap1302_read(ap1302, AP1302_ADV_HINF_MIPI_T3, &value);
+	if (!ret)
+		*val = value & AP1302_TCLK_POST_MASK;
+
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
+static int ap1302_mipi_tclk_post_set(void *arg, u64 val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 reg, reg_val;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+	ret = ap1302_read(ap1302, AP1302_ADV_HINF_MIPI_T3, &reg);
+	if (ret < 0)
+		goto unlock;
+
+	reg_val = reg & ~(AP1302_TCLK_POST_MASK);
+	reg_val = reg_val | val;
+	ret = ap1302_write(ap1302, AP1302_ADV_HINF_MIPI_T3, reg_val, NULL);
+
+unlock:
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
+static int ap1302_mipi_tclk_pre_get(void *arg, u64 *val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 value;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+
+	ret = ap1302_read(ap1302, AP1302_ADV_HINF_MIPI_T3, &value);
+	if (!ret)
+		*val = (value & AP1302_TCLK_PRE_MASK) >> AP1302_TCLK_PRE_SHIFT;
+
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
+static int ap1302_mipi_tclk_pre_set(void *arg, u64 val)
+{
+	struct ap1302_device *ap1302 = arg;
+	u32 reg, reg_val;
+	int ret;
+
+	mutex_lock(&ap1302->debugfs.lock);
+	ret = ap1302_read(ap1302, AP1302_ADV_HINF_MIPI_T3, &reg);
+	if (ret < 0)
+		goto unlock;
+
+	reg_val = reg & ~(AP1302_TCLK_PRE_MASK);
+	reg_val = reg_val | val << AP1302_TCLK_PRE_SHIFT;
+	ret = ap1302_write(ap1302, AP1302_ADV_HINF_MIPI_T3, reg_val, NULL);
+
+unlock:
+	mutex_unlock(&ap1302->debugfs.lock);
+
+	return ret;
+}
+
 /*
  * The sipm_addr and sipm_data attributes expose access to the sensor I2C bus.
  *
@@ -869,6 +1080,14 @@ DEFINE_DEBUGFS_ATTRIBUTE(ap1302_sipm_addr_fops, ap1302_sipm_addr_get,
 DEFINE_DEBUGFS_ATTRIBUTE(ap1302_sipm_data_fops, ap1302_sipm_data_get,
 			 ap1302_sipm_data_set, "0x%08llx\n");
 
+/* The debugfs is to read and write mipi clk parameters tclk_post values */
+DEFINE_DEBUGFS_ATTRIBUTE(ap1302_mipi_tclk_post_fops, ap1302_mipi_tclk_post_get,
+			 ap1302_mipi_tclk_post_set, "0x%08llx\n");
+
+/* The debugfs is to read and write mipi clk parameters and tclk_pre values */
+DEFINE_DEBUGFS_ATTRIBUTE(ap1302_mipi_tclk_pre_fops, ap1302_mipi_tclk_pre_get,
+			 ap1302_mipi_tclk_pre_set, "0x%08llx\n");
+
 static void ap1302_debugfs_init(struct ap1302_device *ap1302)
 {
 	struct dentry *dir;
@@ -888,6 +1107,10 @@ static void ap1302_debugfs_init(struct ap1302_device *ap1302)
 				   ap1302, &ap1302_sipm_addr_fops);
 	debugfs_create_file_unsafe("sipm_data", 0600, ap1302->debugfs.dir,
 				   ap1302, &ap1302_sipm_data_fops);
+	debugfs_create_file_unsafe("mipi_tclk_post", 0600, ap1302->debugfs.dir,
+				   ap1302, &ap1302_mipi_tclk_post_fops);
+	debugfs_create_file_unsafe("mipi_tclk_pre", 0600, ap1302->debugfs.dir,
+				   ap1302, &ap1302_mipi_tclk_pre_fops);
 }
 
 static void ap1302_debugfs_cleanup(struct ap1302_device *ap1302)
@@ -924,8 +1147,8 @@ static int ap1302_power_on_sensors(struct ap1302_device *ap1302)
 			ret = regulator_enable(sensor->supplies[j].consumer);
 			if (ret < 0) {
 				dev_err(ap1302->dev,
-						"Failed to enable supply %u for sensor %u\n",
-						j, i);
+					"Failed to enable supply %u for sensor %u\n",
+					j, i);
 				goto error;
 			}
 
@@ -974,7 +1197,16 @@ static int ap1302_power_on(struct ap1302_device *ap1302)
 		usleep_range(200, 1000);
 	}
 
-	/* 2. Power up the regulators. To be implemented. */
+	/* 2. Power up the regulators. */
+	if (ap1302->vcc_supply)
+	{
+		ret = regulator_enable(ap1302->vcc_supply);
+		if (ret < 0) {
+			dev_err(ap1302->dev, "Failed to enable vcc supply: %d\n", ret);
+			return ret;
+		}
+		usleep_range(200, 1000);
+	}
 
 	/* 3. De-assert STANDBY. */
 	if (ap1302->standby_gpio) {
@@ -988,6 +1220,8 @@ static int ap1302_power_on(struct ap1302_device *ap1302)
 		dev_err(ap1302->dev, "Failed to enable clock: %d\n", ret);
 		return ret;
 	}
+	/* Allow clock to setup */
+	usleep_range(200, 1000);
 
 	/* 5. De-assert RESET. */
 	gpiod_set_value(ap1302->reset_gpio, 0);
@@ -1006,6 +1240,9 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 	/* 1. Assert RESET. */
 	gpiod_set_value(ap1302->reset_gpio, 1);
 
+	/* Allow Reset to occur */
+	usleep_range(200, 1000);
+
 	/* 2. Turn the clock off. */
 	clk_disable_unprepare(ap1302->clock);
 
@@ -1015,7 +1252,12 @@ static void ap1302_power_off(struct ap1302_device *ap1302)
 		usleep_range(200, 1000);
 	}
 
-	/* 4. Power down the regulators. To be implemented. */
+	/* 4. Power down the regulators. */
+	if (ap1302->vcc_supply)
+	{
+		regulator_disable(ap1302->vcc_supply);
+		usleep_range(200, 1000);
+	}
 
 	/* 5. De-assert STANDBY. */
 	if (ap1302->standby_gpio) {
@@ -1047,16 +1289,13 @@ static int ap1302_dump_console(struct ap1302_device *ap1302)
 		goto done;
 	}
 
-	print_hex_dump(KERN_INFO, "console ", DUMP_PREFIX_OFFSET, 16, 1, buffer,
-		       AP1302_CON_BUF_SIZE, true);
-
 	buffer[AP1302_CON_BUF_SIZE] = '\0';
 
 	for (p = buffer; p < buffer + AP1302_CON_BUF_SIZE && *p; p = endp + 1) {
 		endp = strchrnul(p, '\n');
 		*endp = '\0';
 
-		printk(KERN_INFO "console %s\n", p);
+		dev_info(ap1302->dev,"log > %s\n",p);
 	}
 
 	ret = 0;
@@ -1092,39 +1331,95 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 
 static int ap1302_stall(struct ap1302_device *ap1302, bool stall)
 {
-	int ret = 0;
+	u32 value;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SYS_START, &value);
+	if (ret < 0)
+		return ret;
+
+	if ( !! (value & AP1302_SYS_START_STALL_STATUS) == stall ) {
+		dev_warn(ap1302->dev,
+			 "Stall status already as requested : %s\n",stall?"stalled":"running");
+		return 0;
+	}
 
 	if (stall) {
+		if (ap1302->stall_standby)
+			dev_info(ap1302->dev,"Standby, sensor shutdown stall mode\n");
+
 		ap1302_write(ap1302, AP1302_SYS_START,
-			     AP1302_SYS_START_PLL_LOCK |
-			     AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
-		ap1302_write(ap1302, AP1302_SYS_START,
-			     AP1302_SYS_START_PLL_LOCK |
-			     AP1302_SYS_START_STALL_EN |
-			     AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
+				 AP1302_SYS_START_STALL_EN |
+				 (ap1302->stall_standby?
+					AP1302_SYS_START_STALL_MODE_STANDBY_SENSOR_OFF:
+					AP1302_SYS_START_STALL_MODE_DISABLED)
+				, &ret);
 		if (ret < 0)
 			return ret;
 
-		msleep(200);
-
-		ap1302_write(ap1302, AP1302_ADV_IRQ_SYS_INTE,
-			     AP1302_ADV_IRQ_SYS_INTE_SIPM |
-			     AP1302_ADV_IRQ_SYS_INTE_SIPS_FIFO_WRITE, &ret);
-		if (ret < 0)
+		/*
+		 * Wait for Stall Status
+		 */
+		ret = ap1302_poll_timeout(ap1302,AP1302_SYS_START,value,
+				value & AP1302_SYS_START_STALL_STATUS,
+				10000,5000000);
+		if (ret) {
+			dev_err(ap1302->dev,"Stall Failed: %d\n",ret);
 			return ret;
+		}
 
-		return 0;
+		ap1302->streaming = false;
 	} else {
-		return ap1302_write(ap1302, AP1302_SYS_START,
-				    AP1302_SYS_START_PLL_LOCK |
-				    AP1302_SYS_START_STALL_STATUS |
+		ap1302->streaming = true;
+
+		ap1302_write(ap1302, AP1302_SYS_START,
 				    AP1302_SYS_START_STALL_EN |
-				    AP1302_SYS_START_STALL_MODE_DISABLED, NULL);
+				    AP1302_SYS_START_STALL_MODE_DISABLED, &ret);
+		if (ret < 0)
+			return ret;
+
+		/*
+		 * Wait for Stall Status
+		 */
+		ret = ap1302_poll_timeout(ap1302,AP1302_SYS_START,value,
+				!(value & AP1302_SYS_START_STALL_STATUS),
+				10000,5000000);
+		if (ret) {
+			dev_err(ap1302->dev,"Stall Failed: %d\n",ret);
+			return ret;
+		}
 	}
+	return 0;
+}
+
+static int ap1302_set_mipi_t3_clk(struct ap1302_device *ap1302)
+{
+	unsigned int mipi_t3, t_clk_post, t_clk_pre;
+	int ret;
+
+	/* Set the Tclk_post and Tclk_pre values */
+	ret = ap1302_read(ap1302, AP1302_ADV_HINF_MIPI_T3, &mipi_t3);
+	if (ret)
+		return ret;
+
+	/* Read Tclk post default setting and increment by 2 */
+	t_clk_post = ((mipi_t3 & AP1302_TCLK_POST_MASK)
+					>> AP1302_TCLK_POST_SHIFT) + 0x5;
+	/* Read Tclk pre default setting and increment by 1 */
+	t_clk_pre = ((mipi_t3 & AP1302_TCLK_PRE_MASK)
+					>> AP1302_TCLK_PRE_SHIFT) + 0x1;
+
+	mipi_t3 = ((mipi_t3 & ~(AP1302_TCLK_POST_MASK))
+					& ~(AP1302_TCLK_PRE_MASK));
+	mipi_t3 = (mipi_t3 | (t_clk_pre << AP1302_TCLK_PRE_SHIFT)
+					| t_clk_post);
+
+	/* Write MIPI_T3 register with updated Tclk_post and Tclk_pre values */
+	return ap1302_write(ap1302, AP1302_ADV_HINF_MIPI_T3, mipi_t3, NULL);
 }
 
 /* -----------------------------------------------------------------------------
-  * V4L2 Controls
+ * V4L2 Controls
  */
 
 static u16 ap1302_wb_values[] = {
@@ -1160,9 +1455,234 @@ static int ap1302_set_wb_mode(struct ap1302_device *ap1302, s32 mode)
 	return ap1302_write(ap1302, AP1302_AWB_CTRL, val, NULL);
 }
 
+static int ap1302_get_wb_mode(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AWB_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_AWB_CTRL_MODE_MASK;
+	*mode = 0; // Default to V4L2_WHITE_BALANCE_MANUAL
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_wb_values);ret++) {
+		if (val == ap1302_wb_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static int ap1302_set_exposure(struct ap1302_device *ap1302, s32 mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AE_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_AE_CTRL_MODE_MASK;
+	val |= mode;
+
+	return ap1302_write(ap1302, AP1302_AE_CTRL, val, NULL);
+}
+
+static int ap1302_get_exposure(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AE_CTRL, &val);
+	if (ret)
+		return ret;
+	*mode = val&AP1302_AE_CTRL_MODE_MASK;
+	return 0;
+}
+
+static int ap1302_set_exp_met(struct ap1302_device *ap1302, s32 val)
+{
+	return ap1302_write(ap1302, AP1302_AE_MET, val, NULL);
+}
+
+static int ap1302_get_exp_met(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_AE_MET, &val);
+	if (ret)
+		return ret;
+
+	*value = val & AP1302_AE_MET_MASK;
+	return 0;
+}
+
+static int ap1302_set_gain(struct ap1302_device *ap1302, s32 val)
+{
+	// Format is U8.8
+	return ap1302_write(ap1302, AP1302_AE_MANUAL_GAIN, val, NULL);
+}
+
+static int ap1302_get_gain(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_AE_MANUAL_GAIN, &val);
+	if (ret)
+		return ret;
+
+	*value = val & AP1302_AE_MANUAL_GAIN_MASK;
+	return 0;
+}
+
+static int ap1302_set_hflip(struct ap1302_device *ap1302, s32 flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_HFLIP;
+	val |= flip?AP1302_ORIENTATION_HFLIP:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
+static int ap1302_get_hflip(struct ap1302_device *ap1302, s32 *flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*flip = !!(val&AP1302_ORIENTATION_HFLIP);
+	return 0;
+}
+
+static int ap1302_set_vflip(struct ap1302_device *ap1302, s32 flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_VFLIP;
+	val |= flip?AP1302_ORIENTATION_VFLIP:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
+static int ap1302_get_vflip(struct ap1302_device *ap1302, s32 *flip)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*flip = !!(val&AP1302_ORIENTATION_VFLIP);
+	return 0;
+}
+
+static int ap1302_set_contrast(struct ap1302_device *ap1302, s32 val)
+{
+	// Format is s3.12
+	return ap1302_write(ap1302, AP1302_CONTRAST, val, NULL);
+}
+
+static int ap1302_get_contrast(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_CONTRAST, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
+}
+
+static int ap1302_set_brightness(struct ap1302_device *ap1302, s32 val)
+{
+	// Format is s3.12
+	return ap1302_write(ap1302, AP1302_BRIGHTNESS, val, NULL);
+}
+
+static int ap1302_get_brightness(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_BRIGHTNESS, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
+}
+
+static int ap1302_set_saturation(struct ap1302_device *ap1302, s32 val)
+{
+	// Format is s3.12
+	return ap1302_write(ap1302, AP1302_SATURATION, val, NULL);
+}
+
+static int ap1302_get_saturation(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_SATURATION, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
+}
+
+static int ap1302_set_gamma(struct ap1302_device *ap1302, s32 val)
+{
+	// Format is s3.12
+	return ap1302_write(ap1302, AP1302_GAMMA, val, NULL);
+}
+
+static int ap1302_get_gamma(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_GAMMA, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
+}
+
 static int ap1302_set_zoom(struct ap1302_device *ap1302, s32 val)
 {
+	// Format s7.8
 	return ap1302_write(ap1302, AP1302_DZ_TGT_FCT, val, NULL);
+}
+
+static int ap1302_get_zoom(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+	ret = ap1302_read(ap1302, AP1302_DZ_TGT_FCT, &val);
+	if (ret)
+		return ret;
+
+	*value=val;
+	return 0;
 }
 
 static u16 ap1302_sfx_values[] = {
@@ -1186,8 +1706,31 @@ static u16 ap1302_sfx_values[] = {
 
 static int ap1302_set_special_effect(struct ap1302_device *ap1302, s32 val)
 {
-	return ap1302_write(ap1302, AP1302_SFX_MODE, ap1302_sfx_values[val],
+	return ap1302_write(ap1302, AP1302_SFX_MODE, ap1302_sfx_values[val]&AP1302_SFX_MODE_SFX_MASK,
 			    NULL);
+}
+
+static int ap1302_get_special_effect(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SFX_MODE, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_SFX_MODE_SFX_MASK;
+
+	*mode = V4L2_COLORFX_NONE; // Default
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_sfx_values);ret++) {
+		if (val == ap1302_sfx_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
 }
 
 static u16 ap1302_scene_mode_values[] = {
@@ -1210,7 +1753,30 @@ static u16 ap1302_scene_mode_values[] = {
 static int ap1302_set_scene_mode(struct ap1302_device *ap1302, s32 val)
 {
 	return ap1302_write(ap1302, AP1302_SCENE_CTRL,
-			    ap1302_scene_mode_values[val], NULL);
+			    ap1302_scene_mode_values[val]&AP1302_SCENE_CTRL_MODE_MASK, NULL);
+}
+
+static int ap1302_get_scene_mode(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_SCENE_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val&=AP1302_SCENE_CTRL_MODE_MASK;
+
+	*mode = V4L2_SCENE_MODE_NONE; // Default
+
+	for(ret=0;ret<ARRAY_SIZE(ap1302_scene_mode_values);ret++) {
+		if (val == ap1302_scene_mode_values[ret]) {
+			*mode = ret;
+			break;
+		}
+	}
+
+	return 0;
 }
 
 static const u16 ap1302_flicker_values[] = {
@@ -1226,6 +1792,95 @@ static int ap1302_set_flicker_freq(struct ap1302_device *ap1302, s32 val)
 			    ap1302_flicker_values[val], NULL);
 }
 
+static int ap1302_get_flicker_freq(struct ap1302_device *ap1302, s32 *value)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_FLICK_CTRL, &val);
+	if (ret)
+		return ret;
+
+	*value = V4L2_CID_POWER_LINE_FREQUENCY_AUTO; // Default
+
+
+	if ((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_DISABLED) {
+		*value = V4L2_CID_POWER_LINE_FREQUENCY_DISABLED;
+	}
+	else if((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_MANUAL) {
+		if((val>>8) == 50)
+			*value = V4L2_CID_POWER_LINE_FREQUENCY_50HZ;
+		if((val>>8) == 60)
+			*value = V4L2_CID_POWER_LINE_FREQUENCY_60HZ;
+
+	}
+	else if((val & AP1302_FLICK_CTRL_MODE_MASK) ==
+			AP1302_FLICK_CTRL_MODE_AUTO) {
+		*value = V4L2_CID_POWER_LINE_FREQUENCY_AUTO;
+	}
+
+	return 0;
+}
+
+static int ap1302_set_auto_focus(struct ap1302_device *ap1302, s32 mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &val);
+	if (ret)
+		return ret;
+
+	val &= ~(AP1302_AF_CTRL_MODE_MASK|AP1302_AF_CTRL_TRIGGER);
+	if (mode)
+		val |= AP1302_AF_CTRL_MODE_AUTO|AP1302_AF_CTRL_TRIGGER;
+
+	return ap1302_write(ap1302, AP1302_AF_CTRL, val, NULL);
+}
+
+static int ap1302_get_auto_focus(struct ap1302_device *ap1302, s32 *mode)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &val);
+	if (ret)
+		return ret;
+
+	*mode = (val&AP1302_AF_CTRL_MODE_MASK)==AP1302_AF_CTRL_MODE_AUTO?1:0;
+	return 0;
+}
+
+static int ap1302_set_3d_path(struct ap1302_device *ap1302, s32 path)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	val &= ~AP1302_ORIENTATION_3DPATH;
+	val |= path?AP1302_ORIENTATION_3DPATH:0;
+
+	return ap1302_write(ap1302, AP1302_ORIENTATION, val, NULL);
+}
+
+static int ap1302_get_3d_path(struct ap1302_device *ap1302, s32 *path)
+{
+	u32 val;
+	int ret;
+
+	ret = ap1302_read(ap1302, AP1302_ORIENTATION, &val);
+	if (ret)
+		return ret;
+
+	*path = !!(val&AP1302_ORIENTATION_3DPATH);
+	return 0;
+}
+
 static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ap1302_device *ap1302 =
@@ -1234,6 +1889,33 @@ static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 	switch (ctrl->id) {
 	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
 		return ap1302_set_wb_mode(ap1302, ctrl->val);
+
+	case V4L2_CID_EXPOSURE:
+		return ap1302_set_exposure(ap1302, ctrl->val);
+
+	case V4L2_CID_EXPOSURE_METERING:
+		return ap1302_set_exp_met(ap1302, ctrl->val);
+
+	case V4L2_CID_GAIN:
+		return ap1302_set_gain(ap1302, ctrl->val);
+
+	case V4L2_CID_HFLIP:
+		return ap1302_set_hflip(ap1302, ctrl->val);
+
+	case V4L2_CID_VFLIP:
+		return ap1302_set_vflip(ap1302, ctrl->val);
+
+	case V4L2_CID_GAMMA:
+		return ap1302_set_gamma(ap1302, ctrl->val);
+
+	case V4L2_CID_CONTRAST:
+		return ap1302_set_contrast(ap1302, ctrl->val);
+
+	case V4L2_CID_BRIGHTNESS:
+		return ap1302_set_brightness(ap1302, ctrl->val);
+
+	case V4L2_CID_SATURATION:
+		return ap1302_set_saturation(ap1302, ctrl->val);
 
 	case V4L2_CID_ZOOM_ABSOLUTE:
 		return ap1302_set_zoom(ap1302, ctrl->val);
@@ -1246,6 +1928,71 @@ static int ap1302_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	case V4L2_CID_POWER_LINE_FREQUENCY:
 		return ap1302_set_flicker_freq(ap1302, ctrl->val);
+
+	case V4L2_CID_FOCUS_AUTO:
+		return ap1302_set_auto_focus(ap1302, ctrl->val);
+
+	case V4L2_CID_AP1302_3D_PATH:
+		return ap1302_set_3d_path(ap1302, ctrl->val);
+
+	default:
+		return -EINVAL;
+	}
+}
+
+static int ap1302_g_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ap1302_device *ap1302 =
+		container_of(ctrl->handler, struct ap1302_device, ctrls);
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
+		return ap1302_get_wb_mode(ap1302, &ctrl->val);
+
+	case V4L2_CID_EXPOSURE:
+		return ap1302_get_exposure(ap1302, &ctrl->val);
+
+	case V4L2_CID_EXPOSURE_METERING:
+		return ap1302_get_exp_met(ap1302, &ctrl->val);
+
+	case V4L2_CID_GAIN:
+		return ap1302_get_gain(ap1302, &ctrl->val);
+
+	case V4L2_CID_HFLIP:
+		return ap1302_get_hflip(ap1302, &ctrl->val);
+
+	case V4L2_CID_VFLIP:
+		return ap1302_get_vflip(ap1302, &ctrl->val);
+
+	case V4L2_CID_GAMMA:
+		return ap1302_get_gamma(ap1302, &ctrl->val);
+
+	case V4L2_CID_CONTRAST:
+		return ap1302_get_contrast(ap1302, &ctrl->val);
+
+	case V4L2_CID_BRIGHTNESS:
+		return ap1302_get_brightness(ap1302, &ctrl->val);
+
+	case V4L2_CID_SATURATION:
+		return ap1302_get_saturation(ap1302, &ctrl->val);
+
+	case V4L2_CID_ZOOM_ABSOLUTE:
+		return ap1302_get_zoom(ap1302, &ctrl->val);
+
+	case V4L2_CID_COLORFX:
+		return ap1302_get_special_effect(ap1302, &ctrl->val);
+
+	case V4L2_CID_SCENE_MODE:
+		return ap1302_get_scene_mode(ap1302, &ctrl->val);
+
+	case V4L2_CID_POWER_LINE_FREQUENCY:
+		return ap1302_get_flicker_freq(ap1302, &ctrl->val);
+
+	case V4L2_CID_FOCUS_AUTO:
+		return ap1302_get_auto_focus(ap1302, &ctrl->val);
+
+	case V4L2_CID_AP1302_3D_PATH:
+		return ap1302_get_3d_path(ap1302, &ctrl->val);
 
 	default:
 		return -EINVAL;
@@ -1265,8 +2012,89 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.def = 1,
 	}, {
 		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_GAMMA,
+		.name = "Gamma",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xFFFF,
+		.step = 0x100,
+		.def = 0x0, // 0: sRGB
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_CONTRAST,
+		.name = "Contrast",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xFFFF,
+		.step = 0x100,
+		.def = 0x100,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_BRIGHTNESS,
+		.name = "Brightness",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xFFFF,
+		.step = 0x100,
+		.def = 0x100,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_SATURATION,
+		.name = "Saturation",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xFFFF,
+		.step = 0x100,
+		.def = 0x1000,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_EXPOSURE,
+		.name = "Exposure",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xC,
+		.step = 1,
+		.def = 0xC,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_EXPOSURE_METERING,
+		.name = "Exposure Metering",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0x3,
+		.step = 1,
+		.def = 0x1,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_GAIN,
+		.name = "Gain",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0x0,
+		.max = 0xFFFF,
+		.step = 0x100,
+		.def = 0x100,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_HFLIP,
+		.name = "HFlip",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_VFLIP,
+		.name = "VFlip",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
 		.id = V4L2_CID_ZOOM_ABSOLUTE,
-		.min = 0x0100,
+		.min = 0x0,
 		.max = 0x1000,
 		.step = 1,
 		.def = 0x0100,
@@ -1290,6 +2118,24 @@ static const struct v4l2_ctrl_config ap1302_ctrls[] = {
 		.min = 0,
 		.max = 3,
 		.def = 3,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_FOCUS_AUTO,
+		.name = "Auto Focus",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+	}, {
+		.ops = &ap1302_ctrl_ops,
+		.id = V4L2_CID_AP1302_3D_PATH,
+		.name = "3D Path",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
 	},
 };
 
@@ -1303,7 +2149,18 @@ static int ap1302_ctrls_init(struct ap1302_device *ap1302)
 		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(ap1302_ctrls); i++)
-		v4l2_ctrl_new_custom(&ap1302->ctrls, &ap1302_ctrls[i], NULL);
+	{
+		struct v4l2_ctrl * ctrl = v4l2_ctrl_new_custom(&ap1302->ctrls,
+								&ap1302_ctrls[i], NULL);
+		ret = ap1302_g_ctrl(ctrl);
+		if (!ret && ctrl->default_value != ctrl->val) {
+			// Updating default value based on firmware values
+			dev_info(ap1302->dev,"Ctrl '%s' default value updated from %lld to %d\n",
+					ctrl->name, ctrl->default_value, ctrl->val);
+			ctrl->default_value = ctrl->val;
+			ctrl->cur.val = ctrl->val;
+		}
+	}
 
 	if (ap1302->ctrls.error) {
 		ret = ap1302->ctrls.error;
@@ -1528,7 +2385,7 @@ static int ap1302_get_selection(struct v4l2_subdev *sd,
 	case V4L2_SEL_TGT_CROP:
 		sel->r.left = 0;
 		sel->r.top = 0;
-		sel->r.width = resolution->width;
+		sel->r.width = resolution->width * ap1302->width_factor;
 		sel->r.height = resolution->height;
 		break;
 
@@ -1545,6 +2402,9 @@ static int ap1302_s_stream(struct v4l2_subdev *sd, int enable)
 	int ret;
 
 	mutex_lock(&ap1302->lock);
+
+	if (enable == ap1302->streaming)
+		goto done;
 
 	if (enable) {
 		ret = ap1302_configure(ap1302);
@@ -1628,103 +2488,6 @@ static const char * const ap1302_lane_states[] = {
 	"error_s",
 };
 
-static void ap1302_log_lane_state(struct ap1302_sensor *sensor,
-				  unsigned int index)
-{
-	static const char *lp_states[] = {
-		"00", "10", "01", "11",
-	};
-
-	unsigned int counts[4][ARRAY_SIZE(ap1302_lane_states)];
-	unsigned int samples = 0;
-	unsigned int lane;
-	unsigned int i;
-	u32 first[4] = { 0, };
-	u32 last[4] = { 0, };
-	int ret;
-
-	memset(counts, 0, sizeof(counts));
-
-	for (i = 0; i < 1000; ++i) {
-		u32 values[4];
-
-		/*
-		 * Read the state of all lanes and skip read errors and invalid
-		 * values.
-		 */
-		for (lane = 0; lane < 4; ++lane) {
-			ret = ap1302_read(sensor->ap1302,
-					  AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
-					  &values[lane]);
-			if (ret < 0)
-				break;
-
-			if (AP1302_LANE_STATE(values[lane]) >=
-			    ARRAY_SIZE(ap1302_lane_states)) {
-				ret = -EINVAL;
-				break;
-			}
-		}
-
-		if (ret < 0)
-			continue;
-
-		/* Accumulate the samples and save the first and last states. */
-		for (lane = 0; lane < 4; ++lane)
-			counts[lane][AP1302_LANE_STATE(values[lane])]++;
-
-		if (!samples)
-			memcpy(first, values, sizeof(first));
-		memcpy(last, values, sizeof(last));
-
-		samples++;
-	}
-
-	if (!samples)
-		return;
-
-	/*
-	 * Print the LP state from the first sample, the error state from the
-	 * last sample, and the states accumulators for each lane.
-	 */
-	for (lane = 0; lane < 4; ++lane) {
-		u32 state = last[lane];
-		char error_msg[25] = "";
-
-		if (state & (AP1302_LANE_ERR | AP1302_LANE_ABORT)) {
-			unsigned int err = AP1302_LANE_ERR_STATE(state);
-			const char *err_state = NULL;
-
-			err_state = err < ARRAY_SIZE(ap1302_lane_states)
-				  ? ap1302_lane_states[err] : "INVALID";
-
-			snprintf(error_msg, sizeof(error_msg), "ERR (%s%s) %s LP%s",
-				 state & AP1302_LANE_ERR ? "E" : "",
-				 state & AP1302_LANE_ABORT ? "A" : "",
-				 err_state,
-				 lp_states[AP1302_LANE_ERR_LP_VAL(state)]);
-		}
-
-		dev_info(sensor->ap1302->dev, "SINF%u L%u state: LP%s %s",
-			 index, lane, lp_states[AP1302_LANE_LP_VAL(first[lane])],
-			 error_msg);
-
-		for (i = 0; i < ARRAY_SIZE(ap1302_lane_states); ++i) {
-			if (counts[lane][i])
-				printk(KERN_CONT " %s:%u",
-				       ap1302_lane_states[i],
-				       counts[lane][i]);
-		}
-		printk(KERN_CONT "\n");
-	}
-
-	/* Reset the error flags. */
-	for (lane = 0; lane < 4; ++lane)
-		ap1302_write(sensor->ap1302,
-			     AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
-			     AP1302_LANE_ERR | AP1302_LANE_ABORT, NULL);
-}
-
 static int ap1302_log_status(struct v4l2_subdev *sd)
 {
 	struct ap1302_device *ap1302 = to_ap1302(sd);
@@ -1804,14 +2567,15 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 	dev_info(ap1302->dev, "Frame counters: ICP %u, HINF %u, BRAC %u\n",
 		 frame_count_icp, frame_count_hinf, frame_count_brac);
 
-	/* Sample the lane state. */
-	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
-		struct ap1302_sensor *sensor = &ap1302->sensors[i];
-
-		if (!sensor->ap1302)
-			continue;
-
-		ap1302_log_lane_state(sensor, i);
+	/* Provide Autofocus Info */
+	ret = ap1302_read(ap1302, AP1302_AF_CTRL, &value);
+	if (ret < 0)
+		return ret;
+	if ( (value & AP1302_AF_CTRL_MODE_MASK) == AP1302_AF_CTRL_MODE_AUTO) {
+		ret = ap1302_read(ap1302, AP1302_AF_POS, &value);
+		if (ret < 0)
+			return ret;
+		dev_info(ap1302->dev, "AF Pos: %d\n",(s16)value);
 	}
 
 	return 0;
@@ -2082,6 +2846,141 @@ static void ap1302_sensor_cleanup(struct ap1302_sensor *sensor)
 	of_node_put(sensor->of_node);
 }
 
+/* --------------------------------------------------------------------------
+ * sysfs attributes
+ */
+static ssize_t ap1302_store_stall_standby(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	if (strtobool(buf, &ap1302->stall_standby) < 0)
+		return -EINVAL;
+
+	return size;
+}
+
+static ssize_t ap1302_show_stall_standby(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+
+	return sysfs_emit(buf, "%d\n", ap1302->stall_standby);
+}
+
+static DEVICE_ATTR(stall_standby, 0644, ap1302_show_stall_standby, ap1302_store_stall_standby);
+
+static ssize_t ap1302_show_lane_status(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(to_i2c_client(dev));
+	struct ap1302_device *ap1302 = to_ap1302(sd);
+	static const char * const lp_states[] = {
+		"00", "10", "01", "11",
+	};
+	unsigned int index;
+	u32 buf_len=0;
+
+	/* Sample the lane state. */
+	for (index = 0; index < ARRAY_SIZE(ap1302->sensors); ++index) {
+		struct ap1302_sensor *sensor = &ap1302->sensors[index];
+
+		if (!sensor->ap1302)
+			continue;
+
+		unsigned int counts[4][ARRAY_SIZE(ap1302_lane_states)];
+		unsigned int samples = 0;
+		unsigned int lane;
+		unsigned int i;
+		u32 first[4] = { 0, };
+		u32 last[4] = { 0, };
+		int ret;
+
+		memset(counts, 0, sizeof(counts));
+
+		for (i = 0; i < 1000; ++i) {
+			u32 values[4];
+
+			/*
+			 * Read the state of all lanes and skip read errors and invalid
+			 * values.
+			 */
+			for (lane = 0; lane < 4; ++lane) {
+				ret = ap1302_read(sensor->ap1302,
+						  AP1302_ADV_SINF_MIPI_INTERNAL_p_LANE_n_STAT(index, lane),
+						  &values[lane]);
+				if (ret < 0)
+					break;
+
+				if (AP1302_LANE_STATE(values[lane]) >=
+				    ARRAY_SIZE(ap1302_lane_states)) {
+					ret = -EINVAL;
+					break;
+				}
+			}
+
+			if (ret < 0)
+				continue;
+
+			/* Accumulate the samples and save the first and last states. */
+			for (lane = 0; lane < 4; ++lane)
+				counts[lane][AP1302_LANE_STATE(values[lane])]++;
+
+			if (!samples)
+				memcpy(first, values, sizeof(first));
+			memcpy(last, values, sizeof(last));
+
+			samples++;
+		}
+
+		if (!samples)
+			return buf_len;
+
+		/*
+		 * Print the LP state from the first sample, the error state from the
+		 * last sample, and the states accumulators for each lane.
+		 */
+		for (lane = 0; lane < 4; ++lane) {
+			u32 state = last[lane];
+			char error_msg[25] = "";
+
+			if (state & (AP1302_LANE_ERR | AP1302_LANE_ABORT)) {
+				unsigned int err = AP1302_LANE_ERR_STATE(state);
+				const char *err_state = NULL;
+
+				err_state = err < ARRAY_SIZE(ap1302_lane_states)
+					  ? ap1302_lane_states[err] : "INVALID";
+
+				scnprintf(error_msg, sizeof(error_msg), "ERR (%s%s) %s LP%s",
+					 state & AP1302_LANE_ERR ? "E" : "",
+					 state & AP1302_LANE_ABORT ? "A" : "",
+					 err_state,
+					 lp_states[AP1302_LANE_ERR_LP_VAL(state)]);
+			}
+			buf_len += scnprintf(buf+buf_len,PAGE_SIZE-buf_len,
+					"SINF%u L%u state: LP%s %s\n",
+					 index, lane,
+					 lp_states[AP1302_LANE_LP_VAL(first[lane])],
+					 error_msg);
+
+			for (i = 0; i < ARRAY_SIZE(ap1302_lane_states); ++i) {
+				if (counts[lane][i])
+					buf_len += scnprintf(buf+buf_len,
+						PAGE_SIZE-buf_len," %s:%u",
+						ap1302_lane_states[i],
+						counts[lane][i]);
+			}
+			buf_len += scnprintf(buf+buf_len,PAGE_SIZE-buf_len,"\n");
+		}
+	}
+
+	return buf_len;
+}
+
+static DEVICE_ATTR(lane_status, 0444, ap1302_show_lane_status, NULL);
+
 /* -----------------------------------------------------------------------------
  * Boot & Firmware Handling
  */
@@ -2113,7 +3012,15 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 		return -EINVAL;
 	}
 
-	dev_dbg(ap1302->dev, "Requesting firmware %s\n", name);
+	if (fw_name_param!=NULL) {
+		ret = snprintf(name, sizeof(name), "%s",fw_name_param);
+		if (ret >= sizeof(name)) {
+			dev_err(ap1302->dev, "Firmware name too long\n");
+			return -EINVAL;
+		}
+	}
+
+	dev_info(ap1302->dev, "Requesting firmware %s\n", name);
 
 	ret = request_firmware(&ap1302->fw, name, ap1302->dev);
 	if (ret) {
@@ -2128,6 +3035,17 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	 * the firmware is valid.
 	 */
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
+
+	if (fw_hdr->magic != FW_MAGIC)
+	{
+		dev_err(ap1302->dev,
+			"Invalid firmware magic: %08x != %08x\n",fw_hdr->magic,FW_MAGIC);
+		return -EINVAL;
+	}
+
+	dev_info(ap1302->dev,"Firmware header version : %d\n",fw_hdr->version);
+	dev_info(ap1302->dev,"Firmware description : %s\n",fw_hdr->desc);
+
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
 	if (fw_hdr->pll_init_size > fw_size) {
@@ -2185,53 +3103,45 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 {
 	const struct ap1302_firmware_header *fw_hdr;
 	unsigned int fw_size;
+	unsigned long clock_freq,clock_fp_mhz;
 	const u8 *fw_data;
-	unsigned int win_pos = 0;
-	unsigned int crc;
+	unsigned int win_pos = 0,value;
 	int ret;
 
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
 	fw_data = (u8 *)&fw_hdr[1];
 	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
-	/* Clear the CRC register. */
-	ret = ap1302_write(ap1302, AP1302_SIP_CRC, 0xffff, NULL);
+	// Fixed Point Calculation
+#define HZ_TO_S15_16_MHZ(hz) \
+	(s32)div_s64( ((s64)hz)<<16, 1000000)
+
+	clock_freq = clk_get_rate(ap1302->clock);
+	clock_fp_mhz = HZ_TO_S15_16_MHZ(clock_freq);
+	dev_info(ap1302->dev,"AP1302 oscillator clock %ld hz (FP 0x%08x)\n",clock_freq,clock_fp_mhz);
+
+	ret = ap1302_write(ap1302, AP1302_SYSTEM_FREQ_IN,
+			clock_fp_mhz, NULL);
 	if (ret)
 		return ret;
 
-	/*
-	 * Load the PLL initialization settings, set the bootdata stage to 2 to
-	 * apply the basic_init_hp settings, and wait 1ms for the PLL to lock.
-	 */
-	ret = ap1302_write_fw_window(ap1302, fw_data, fw_hdr->pll_init_size,
-				     &win_pos);
+	// Using the first link frequency
+	clock_freq = (u32)*ap1302->bus_cfg.link_frequencies;
+	clock_fp_mhz = HZ_TO_S15_16_MHZ(clock_freq);
+	dev_info(ap1302->dev,"AP1302 MIPI frequency %ld hz (FP 0x%08x)\n",clock_freq,clock_fp_mhz);
+
+	ret = ap1302_write(ap1302, AP1302_HINF_MIPI_FREQ_TGT,
+			clock_fp_mhz, NULL);
 	if (ret)
 		return ret;
 
-	ret = ap1302_write(ap1302, AP1302_BOOTDATA_STAGE, 0x0002, NULL);
-	if (ret)
-		return ret;
-
-	usleep_range(1000, 2000);
-
-	/* Load the rest of the bootdata content and verify the CRC. */
-	ret = ap1302_write_fw_window(ap1302, fw_data + fw_hdr->pll_init_size,
-				     fw_size - fw_hdr->pll_init_size, &win_pos);
+	/* Load bootdata, pll_init_size not needed for firmware 429 and later */
+	ret = ap1302_write_fw_window(ap1302, fw_data,
+				     fw_size, &win_pos);
 	if (ret)
 		return ret;
 
 	msleep(40);
-
-	ret = ap1302_read(ap1302, AP1302_SIP_CRC, &crc);
-	if (ret)
-		return ret;
-
-	if (crc != fw_hdr->crc) {
-		dev_warn(ap1302->dev,
-			 "CRC mismatch: expected 0x%04x, got 0x%04x\n",
-			 fw_hdr->crc, crc);
-		return -EAGAIN;
-	}
 
 	/*
 	 * Write 0xffff to the bootdata_stage register to indicate to the
@@ -2241,8 +3151,39 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	if (ret)
 		return ret;
 
+	msleep(10);
+
+	/*
+	 * Wait for AP1302_BOOTDATA_STAGE to become 0xFFFF
+	 */
+	ret = ap1302_poll_timeout(ap1302, AP1302_BOOTDATA_STAGE,
+			value,value==0xFFFF, 10000, 5000000);
+	if (ret < 0)
+	{
+		dev_err(ap1302->dev,
+			 "AP1302_BOOTDATA_STAGE not 0xFFFF : %04X (POLL %d)\n",value,ret);
+		return ret;
+	}
+
+	/* Print errors. */
+	ret = ap1302_read(ap1302, AP1302_ERROR, &value);
+	if (ret < 0)
+		return ret;
+
+	if(value)
+	{
+		dev_warn(ap1302->dev,
+			"Error Reg : %04X\n",value);
+		return -EAGAIN;
+	}
+
 	/* The AP1302 starts outputting frames right after boot, stop it. */
-	return ap1302_stall(ap1302, true);
+	ret = ap1302_stall(ap1302, true);
+	if (ret)
+		return ret;
+
+	/* Adjust MIPI TCLK timings */
+	return ap1302_set_mipi_t3_clk(ap1302);
 }
 
 static int ap1302_detect_chip(struct ap1302_device *ap1302)
@@ -2311,6 +3252,9 @@ static int ap1302_hw_init(struct ap1302_device *ap1302)
 		if (ret != -EAGAIN)
 			goto error_power;
 
+		// Dump
+		ap1302_log_status(&ap1302->sd);
+
 		ap1302_power_off(ap1302);
 	}
 
@@ -2353,13 +3297,14 @@ static int ap1302_config_v4l2(struct ap1302_device *ap1302)
 	sd->dev = ap1302->dev;
 	v4l2_i2c_subdev_init(sd, ap1302->client, &ap1302_subdev_ops);
 
-	strlcpy(sd->name, DRIVER_NAME, sizeof(sd->name));
+	strscpy(sd->name, DRIVER_NAME, sizeof(sd->name));
 	strlcat(sd->name, ".", sizeof(sd->name));
 	strlcat(sd->name, dev_name(ap1302->dev), sizeof(sd->name));
 	dev_dbg(ap1302->dev, "name %s\n", sd->name);
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_HAS_EVENTS;
 	sd->internal_ops = &ap1302_subdev_internal_ops;
+	// MEDIA_ENT_F_CAM_SENSOR : MEDIA_ENT_F_PROC_VIDEO_ISP not defined yet
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	sd->entity.ops = &ap1302_media_ops;
 
@@ -2435,6 +3380,21 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 		return PTR_ERR(ap1302->standby_gpio);
 	}
 
+	ap1302->vcc_supply = devm_regulator_get_optional(ap1302->dev, "vcc");
+	if (IS_ERR(ap1302->vcc_supply)) {
+		if (PTR_ERR(ap1302->vcc_supply) == -ENODEV)
+		{
+			dev_warn(ap1302->dev,"vcc supply not found\n");
+			ap1302->vcc_supply=NULL;
+		}
+		else
+		{
+			dev_err(ap1302->dev, "Can't get vcc supply: %ld\n",
+				PTR_ERR(ap1302->vcc_supply));
+			return PTR_ERR(ap1302->vcc_supply);
+		}
+	}
+
 	/* Bus configuration */
 	ep = fwnode_graph_get_next_endpoint(dev_fwnode(ap1302->dev), NULL);
 	if (!ep)
@@ -2446,6 +3406,11 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 	if (ret < 0) {
 		dev_err(ap1302->dev, "Failed to parse bus configuration\n");
 		return ret;
+	}
+
+	if (!ap1302->bus_cfg.nr_of_link_frequencies) {
+		dev_err(ap1302->dev, "no link frequencies defined");
+		return -EINVAL;
 	}
 
 	/* Sensors */
@@ -2518,6 +3483,9 @@ static void ap1302_cleanup(struct ap1302_device *ap1302)
 
 	v4l2_fwnode_endpoint_free(&ap1302->bus_cfg);
 
+	device_remove_file(ap1302->dev, &dev_attr_stall_standby);
+	device_remove_file(ap1302->dev, &dev_attr_lane_status);
+
 	mutex_destroy(&ap1302->lock);
 }
 
@@ -2533,6 +3501,8 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 
 	ap1302->dev = &client->dev;
 	ap1302->client = client;
+
+	dev_info(ap1302->dev, "AP1302 Driver: %s\n",AP1302_DRV_TAG);
 
 	mutex_init(&ap1302->lock);
 
@@ -2570,6 +3540,13 @@ static int ap1302_probe(struct i2c_client *client, const struct i2c_device_id *i
 	ret = ap1302_hw_init(ap1302);
 	if (ret)
 		goto error;
+
+	ret = device_create_file(ap1302->dev, &dev_attr_stall_standby);
+	ret |= device_create_file(ap1302->dev, &dev_attr_lane_status);
+	if (ret) {
+		dev_err(ap1302->dev, "could not register sysfs entry\n");
+		goto error_hw_cleanup;
+	}
 
 	ap1302_debugfs_init(ap1302);
 
@@ -2625,5 +3602,8 @@ static struct i2c_driver ap1302_i2c_driver = {
 module_i2c_driver(ap1302_i2c_driver);
 
 MODULE_AUTHOR("Florian Rebaudo <frebaudo@witekio.com>");
-MODULE_DESCRIPTION("Driver for ap1302 mezzanine");
+MODULE_AUTHOR("Laurent Pinchart <laurent.pinchart@ideasonboard.com>");
+MODULE_AUTHOR("Anil Kumar M <anil.mamidala@xilinx.com>");
+
+MODULE_DESCRIPTION("ON Semiconductor AP1302 ISP driver");
 MODULE_LICENSE("GPL");
