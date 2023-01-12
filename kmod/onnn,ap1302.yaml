@@ -8,6 +8,7 @@ title: ON Semiconductor AP1302 Advanced Image Coprocessor
 
 maintainers:
   - Laurent Pinchart <laurent.pinchart@ideasonboard.com>
+  - Stan Bertrand <sbertrand@witekio.com>
 
 description: |-
   The AP1302 is a standalone ISP for ON Semiconductor sensors. It interfaces to
@@ -59,6 +60,11 @@ properties:
           clock-noncontinuous:
             type: boolean
 
+          link-frequencies:
+            $ref: /schemas/types.yaml#/definitions/uint64-array
+            description:
+                MIPI Frequency from AP1302 to host. Set to the AP1302
+
           data-lanes:
             oneOf:
               - items:
@@ -74,10 +80,14 @@ properties:
 
         required:
           - data-lanes
+          - link-frequency
 
   sensors:
     type: object
     description: List of connected sensors
+    
+      If no sensor is connected, this property must no be specified, and
+      the AP1302 can be used with it's internal test pattern generator.
 
     properties:
       "#address-cells":
@@ -86,13 +96,18 @@ properties:
       "#size-cells":
         const: 0
 
-      onnn,model:
+      sensor,model:
         $ref: "/schemas/types.yaml#/definitions/string"
         description: |
           Model of the connected sensors. Must be a valid compatible string.
 
-          If no sensor is connected, this property must no be specified, and
-          the AP1302 can be used with it's internal test pattern generator.
+      sensor,resolution:
+         description: |
+            Sensor resolution as two 32bit value
+
+      sensor,format:
+         description: |
+            Sensor format from MEDIA_BUS_FMT_xxxx
 
     patternProperties:
       "^sensor@[01]":
@@ -106,20 +121,39 @@ properties:
             description: AP1302 input port number
             maxItems: 1
 
+          sip:
+            description: Sensor SIP information (SIPM bus, I2C addres, ...)
+            maxItems: 1
+            
+          status:
+            description: Sensor status string
+              - okay | ok : Sensor enabled
+              - immutable : Sensor enabled and media link immutable
+              - disabled : Sensor disabled
+            maxItems: 1
+
+          regulator-supplies:
+            description: |
+              List of string naming the sensor supplies
+  
+          regulator-delays:
+            description: |
+              List of int indicating the post delay us for the sensor supplies
+
         patternProperties:
           ".*-supply":
             description: Power supplies for the sensor
 
         required:
           - reg
+          - sip
+          - status
 
         additionalProperties: false
 
     required:
       - "#address-cells"
       - "#size-cells"
-
-    # How can we express that onnn,model requires one sensor object to be set ?
 
     additionalProperties: false
 
@@ -128,7 +162,6 @@ required:
   - reg
   - clocks
   - port
-  - sensors
 
 additionalProperties: false
 
@@ -203,4 +236,151 @@ examples:
         };
     };
 
+  - |
+  
+	  &mipi_csi_0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		virtual-channel;
+		status = "okay";
+
+		port@0 {
+			reg = <0>;
+			mipi_csi0_ep: endpoint {
+				remote-endpoint = <&ap1302_out_ep>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+	};
+  
+    ap1302_camera@3c {
+        compatible = "onnn,ap1302";
+        reg = <0x3c>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_mipi_csi0>;
+        clocks = <&ap1302_osc>;
+        reset-gpios = <&lsio_gpio1 27 GPIO_ACTIVE_LOW>;
+        vcc-supply = <&reg_ap1302>;
+
+        status = "okay";
+
+        port@2 {
+            reg = <2>;
+            ap1302_out_ep: endpoint {
+                remote-endpoint = <&mipi_csi0_ep>;
+                link-frequencies = /bits/ 64 <900000000>;
+                clock-lanes = <0>;
+                data-lanes = <1 2 3 4>;
+            };
+        };
+
+        sensors {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            sensor,model = "ar1335";
+            sensor,resolution = <3840 2160>;
+            sensor,format = <0x300a>; // MEDIA_BUS_FMT_SGRBG10_1X10
+
+            sensor@0 {
+                reg = <0>;
+                status = "okay";
+                sip = <0xf36c>;
+            };
+            
+            sensor@1 {
+                reg = <1>;
+                status = "disabled";
+                sip = <0x376c>;
+            };
+        };
+    };
+  - |
+    ap1302_camera@3c {
+        compatible = "onnn,ap1302";
+        reg = <0x3c>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_mipi_csi0>;
+        clocks = <&ap1302_osc>;
+        reset-gpios = <&lsio_gpio1 27 GPIO_ACTIVE_LOW>;
+        vcc-supply = <&reg_ap1302>;
+
+        status = "okay";
+
+        port@2 {
+            reg = <2>;
+            ap1302_out_ep: endpoint {
+                remote-endpoint = <&mipi_csi0_ep>;
+                link-frequencies = /bits/ 64 <900000000>;
+                clock-lanes = <0>;
+                data-lanes = <1 2 3 4>;
+            };
+        };
+
+        sensors {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            sensor,model = "ar0144";
+            sensor,resolution = <1280 800>;
+            sensor,format = <0x3011>; // MEDIA_BUS_FMT_SGRBG12_1X12
+
+            sensor@0 {
+                reg = <0>;
+                status = "okay";
+                sip = <0x3320>;
+            };
+            
+            sensor@1 {
+                reg = <1>;
+                status = "disabled";
+                sip = <0x3720>;
+            };
+        };
+    };
+    
+  - |
+  ap1302_camera@3c {
+        compatible = "onnn,ap1302";
+        reg = <0x3c>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_mipi_csi0>;
+        clocks = <&ap1302_osc>;
+        reset-gpios = <&lsio_gpio1 27 GPIO_ACTIVE_LOW>;
+        vcc-supply = <&reg_ap1302>;
+
+        status = "okay";
+
+        port@2 {
+            reg = <2>;
+            ap1302_out_ep: endpoint {
+                remote-endpoint = <&mipi_csi0_ep>;
+                link-frequencies = /bits/ 64 <900000000>;
+                clock-lanes = <0>;
+                data-lanes = <1 2 3 4>;
+            };
+        };
+
+        sensors {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            sensor,model = "ar0830";
+            sensor,resolution = <3840 2160>;
+            sensor,format = <0x300a>; // MEDIA_BUS_FMT_SGRBG10_1X10
+
+            sensor@0 {
+                reg = <0>;
+                status = "okay";
+                sip = <0xF36C>;
+            };
+            
+            sensor@1 {
+                reg = <1>;
+                status = "disabled";
+                sip = <0x376C>;
+            };
+        };
+    };
+    
 ...
