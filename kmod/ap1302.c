@@ -7,6 +7,7 @@
  * Copyright (C) 2021, Laurent Pinchart <laurent.pinchart@ideasonboard.com>
  *
  */
+#define DEBUG 1
 
 #include <linux/clk.h>
 #include <linux/debugfs.h>
@@ -2614,6 +2615,12 @@ static int ap1302_log_status(struct v4l2_subdev *sd)
 		dev_info(ap1302->dev, "AF Pos: %d\n",(s16)value);
 	}
 
+	for (i = 0; i < ARRAY_SIZE(ap1302->sensors); ++i) {
+		ap1302_read(ap1302, AP1302_SENSOR_SIP(i), &value);
+		dev_info(ap1302->dev,"Sensor %d SIP %04X\n",i,value);
+
+	}
+
 	return 0;
 }
 
@@ -2811,6 +2818,11 @@ static const struct v4l2_subdev_ops ap1302_sensor_subdev_ops = {
 	.pad = &ap1302_sensor_pad_ops,
 };
 
+static int primary_sip=-1;
+static int secondary_sip=-1;
+module_param_named(psip, primary_sip, int, 0444);
+module_param_named(ssip, secondary_sip, int, 0444);
+
 static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
 				  struct device_node *node)
 {
@@ -2848,6 +2860,19 @@ static int ap1302_sensor_parse_of(struct ap1302_device *ap1302,
 					&sensor->sip);
 	if (ret) {
 		dev_warn(ap1302->dev, "Sensor %d: error reading sip property %d\n", reg, ret);
+	}
+
+	if ( reg == 0 && primary_sip!=-1)
+	{
+		dev_warn(ap1302->dev, "sensor %d: sip value set to %x\n",reg,
+				primary_sip);
+		sensor->sip = primary_sip;
+	}
+	else if ( reg == 1 && secondary_sip!=-1)
+	{
+		dev_warn(ap1302->dev, "sensor %d: sip value set to %x\n", reg,
+				secondary_sip);
+		sensor->sip = secondary_sip;
 	}
 
 	num_supplies = of_property_count_strings(node, "regulator-supplies");
