@@ -109,6 +109,12 @@ properties:
          description: |
             Sensor format from MEDIA_BUS_FMT_xxxx
 
+      sensor,primary-clk-rst-only:
+        description: |
+           Force using primary sensor clock (AP1302 GPIO0) and 
+           reset (AP1302 GPIO1) for both sensor
+           Secondary sensor clock and reset would be AP1302 GPIO2, GPIO3
+
     patternProperties:
       "^sensor@[01]":
         type: object
@@ -324,6 +330,7 @@ examples:
             sensor,model = "ar0144";
             sensor,resolution = <1280 800>;
             sensor,format = <0x3011>; // MEDIA_BUS_FMT_SGRBG12_1X12
+            sensor,primary-clk-rst-only;
 
             sensor@0 {
                 reg = <0>;
