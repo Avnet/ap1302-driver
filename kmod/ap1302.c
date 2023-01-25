@@ -501,6 +501,7 @@ struct ap1302_device {
 	bool stall_standby;
 	bool use_vcid; // virtual channel
 	bool stereo_order;
+	bool primary_clk_rst_only;
 };
 
 static inline struct ap1302_device *to_ap1302(struct v4l2_subdev *sd)
@@ -1332,9 +1333,15 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 			AP1302_SENSOR_SELECT_CLOCK_PRIM;
 			break;
 		case 2:
-			value |= AP1302_SENSOR_SELECT_SENSOR_SEC |
-			AP1302_SENSOR_SELECT_RESET_SEC |
-			AP1302_SENSOR_SELECT_CLOCK_SEC;
+			value |= AP1302_SENSOR_SELECT_SENSOR_SEC;
+			if (ap1302->primary_clk_rst_only) {
+				value |= AP1302_SENSOR_SELECT_RESET_PRIM |
+					AP1302_SENSOR_SELECT_CLOCK_PRIM;
+			}
+			else {
+				value |= AP1302_SENSOR_SELECT_RESET_SEC |
+					AP1302_SENSOR_SELECT_CLOCK_SEC;
+			}
 			break;
 		case 3:
 			if (ap1302->use_vcid)
@@ -1346,9 +1353,12 @@ static int ap1302_configure(struct ap1302_device *ap1302)
 
 			value |= AP1302_SENSOR_SELECT_RESET_PRIM |
 				AP1302_SENSOR_SELECT_CLOCK_PRIM |
-				AP1302_SENSOR_SELECT_RESET_SEC |
-				AP1302_SENSOR_SELECT_CLOCK_SEC |
 				AP1302_SENSOR_SELECT_MODE_3D_ON ;
+
+			if (!ap1302->primary_clk_rst_only)  {
+				value |= AP1302_SENSOR_SELECT_RESET_SEC |
+					AP1302_SENSOR_SELECT_CLOCK_SEC;
+			}
 	}
 
 	dev_dbg(ap1302->dev,"Sensor Select 0x%x\n",value);
@@ -3620,6 +3630,13 @@ static int ap1302_parse_of(struct ap1302_device *ap1302)
 		}
 		dev_dbg(ap1302->dev, "sensor,format 0x%x\n",
 				ap1302->sensor_info.format);
+
+		ap1302->primary_clk_rst_only = of_property_read_bool(sensors,
+				"sensor,primary-clk-rst-only");
+		if (ap1302->primary_clk_rst_only) {
+			dev_dbg(ap1302->dev,
+				"using primary sensor clock and reset only");
+		}
 	}
 
 
