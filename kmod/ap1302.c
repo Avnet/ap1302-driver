@@ -3158,22 +3158,19 @@ static int ap1302_request_firmware(struct ap1302_device *ap1302)
 	 */
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
 
-	if (fw_hdr->magic != FW_MAGIC)
-	{
-		dev_err(ap1302->dev,
-			"Invalid firmware magic: %08x != %08x\n",fw_hdr->magic,FW_MAGIC);
-		return -EINVAL;
-	}
+	if (fw_hdr->magic != FW_MAGIC) {
+		dev_warn(ap1302->dev,"Invalid firmware header detected; Assuming Raw Binary\n");
+	}else{
+		dev_info(ap1302->dev,"Firmware header version : %d\n",fw_hdr->version);
+		dev_info(ap1302->dev,"Firmware description : %s\n",fw_hdr->desc);
 
-	dev_info(ap1302->dev,"Firmware header version : %d\n",fw_hdr->version);
-	dev_info(ap1302->dev,"Firmware description : %s\n",fw_hdr->desc);
+		fw_size = ap1302->fw->size - sizeof(*fw_hdr);
 
-	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
-
-	if (fw_hdr->pll_init_size > fw_size) {
-		dev_err(ap1302->dev,
-			"Invalid firmware: PLL init size too large\n");
-		return -EINVAL;
+		if (fw_hdr->pll_init_size > fw_size) {
+			dev_err(ap1302->dev,
+				"Invalid firmware: PLL init size too large\n");
+			return -EINVAL;
+		}
 	}
 
 	return 0;
@@ -3232,8 +3229,15 @@ static int ap1302_load_firmware(struct ap1302_device *ap1302)
 	int ret;
 
 	fw_hdr = (const struct ap1302_firmware_header *)ap1302->fw->data;
-	fw_data = (u8 *)&fw_hdr[1];
-	fw_size = ap1302->fw->size - sizeof(*fw_hdr);
+
+        if (fw_hdr->magic == FW_MAGIC) {
+		fw_data = (u8 *)&fw_hdr[1];
+		fw_size = ap1302->fw->size - sizeof(*fw_hdr);
+        }else{
+		dev_warn(ap1302->dev,"Loading raw binary firmware\n");
+		fw_data = ap1302->fw->data;
+		fw_size = ap1302->fw->size;
+	}
 
 	// Fixed Point Calculation
 #define HZ_TO_S15_16_MHZ(hz) \
