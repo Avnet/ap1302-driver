@@ -3755,7 +3755,7 @@ error:
 	return ret;
 }
 
-static int ap1302_remove(struct i2c_client *client)
+static void ap1302_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ap1302_device *ap1302 = to_ap1302(sd);
@@ -3773,7 +3773,6 @@ static int ap1302_remove(struct i2c_client *client)
 
 	ap1302_cleanup(ap1302);
 
-	return 0;
 }
 
 static const struct of_device_id ap1302_of_id_table[] = {
